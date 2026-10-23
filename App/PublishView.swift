@@ -67,7 +67,6 @@ struct PublishView: View {
         } message: {
             Text("This merges it into \(model.defaultBranch). Everyone sees the changes once the site rebuilds.")
         }
-        .overlay { if model.isBusy { ProgressView("Publishing…").padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10)) } }
         .task { comparison = await model.comparison() }
     }
 }

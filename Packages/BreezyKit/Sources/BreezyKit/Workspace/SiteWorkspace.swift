@@ -44,20 +44,23 @@ public final class SiteWorkspace {
     }
 
     /// Downloads a branch that has no local copy yet, saves it, and opens it.
-    public static func download(_ branch: String, client: GitHubClient, store: LocalStore) async throws -> SiteWorkspace {
-        let snapshot = try await fetchSnapshot(branch, client: client, store: store)
+    /// Reports file downloads as (files done, files to download). Only files not already on the device are counted.
+    public typealias Progress = @MainActor (_ done: Int, _ total: Int) -> Void
+
+    public static func download(_ branch: String, client: GitHubClient, store: LocalStore, progress: Progress? = nil) async throws -> SiteWorkspace {
+        let snapshot = try await fetchSnapshot(branch, client: client, store: store, progress: progress)
         let state = BranchState(branch: branch, base: snapshot, existsOnRemote: true, fetchedAt: .now)
         try store.saveBranchState(state)
         return try SiteWorkspace(store: store, state: state)
     }
 
     /// The node files and assets at the branch head, downloading any file contents not already stored.
-    static func fetchSnapshot(_ branch: String, client: GitHubClient, store: LocalStore) async throws -> Snapshot {
+    static func fetchSnapshot(_ branch: String, client: GitHubClient, store: LocalStore, progress: Progress? = nil) async throws -> Snapshot {
         let head = try await client.headSHA(of: branch)
-        return try await fetchSnapshot(commit: head, client: client, store: store)
+        return try await fetchSnapshot(commit: head, client: client, store: store, progress: progress)
     }
 
-    static func fetchSnapshot(commit: String, client: GitHubClient, store: LocalStore) async throws -> Snapshot {
+    static func fetchSnapshot(commit: String, client: GitHubClient, store: LocalStore, progress: Progress? = nil) async throws -> Snapshot {
         let entries = try await client.tree(ofCommit: commit)
         let nodeEntries = entries.filter { e in
             e.isBlob && e.path.hasPrefix(nodesDir) && e.path.hasSuffix(".md")
@@ -67,7 +70,11 @@ public final class SiteWorkspace {
         let texts = try await withThrowingTaskGroup(of: (String, String).self) { group in
             for e in missing { group.addTask { (e.sha, try await client.blobText(e.sha)) } }
             var out: [(String, String)] = []
-            for try await t in group { out.append(t) }
+            progress?(0, missing.count)
+            for try await t in group {
+                out.append(t)
+                progress?(out.count, missing.count)
+            }
             return out
         }
         for (sha, text) in texts { try store.storeObject(text, sha: sha) }
@@ -185,7 +192,7 @@ public final class SiteWorkspace {
 
     /// Creates the branch on GitHub if needed, takes GitHub's newer files, and pushes queued commits in order.
     @discardableResult
-    public func sync(client: GitHubClient) async throws -> SyncResult {
+    public func sync(client: GitHubClient, progress: Progress? = nil) async throws -> SyncResult {
         isSyncing = true
         defer { isSyncing = false }
         if !state.conflicts.isEmpty { return .conflicts(state.conflicts.count) }
@@ -209,7 +216,7 @@ public final class SiteWorkspace {
             try store.saveBranchState(state)
         }
         if head != state.base.commit {
-            let remote = try await Self.fetchSnapshot(commit: head, client: client, store: store)
+            let remote = try await Self.fetchSnapshot(commit: head, client: client, store: store, progress: progress)
             let found = conflicts(with: remote)
             if !found.isEmpty {
                 state.pendingRemote = remote
@@ -302,9 +309,9 @@ public final class SiteWorkspace {
     /// Moves this copy's local changes (uncommitted edits and queued commits, as uncommitted edits) onto a new branch
     /// created on this device from `base`'s current files on GitHub. Files `base` also changed differently become
     /// conflicts, resolved file by file as usual. This branch's local copy is removed afterwards.
-    public func moveEdits(toNewBranch name: String, from base: String, client: GitHubClient) async throws -> SiteWorkspace {
+    public func moveEdits(toNewBranch name: String, from base: String, client: GitHubClient, progress: Progress? = nil) async throws -> SiteWorkspace {
         guard store.branchState(named: name) == nil else { throw WorkspaceError.branchExists(name) }
-        let target = try await Self.fetchSnapshot(base, client: client, store: store)
+        let target = try await Self.fetchSnapshot(base, client: client, store: store, progress: progress)
         let touched = Set(queue.flatMap { $0.changes.map(\.path) })
             .union(store.working(branch).keys.map(Self.path))
             .union(state.deleted.map(Self.path))

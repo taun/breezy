@@ -41,7 +41,7 @@ scripts/simulator.sh            # build, install in the iOS Simulator with the s
 
 The scripts put build output in `$TMPDIR`: building inside `~/Documents` fails at code signing ("resource fork, Finder information, or similar detritus not allowed").
 
-`scripts/simulator.sh` needs no token or network. It copies the nodes from the sibling site repo into the app's local storage, so the UI can be checked with real content. `BREEZY_DEFAULTS` sets saved UI state before launch, for testing restoration, for example `BREEZY_DEFAULTS='root.selectionByBranch={"phase2":"history-of-flash"}' scripts/simulator.sh`.
+`scripts/simulator.sh` needs no token or network. It copies the nodes from the sibling site repo into the app's local storage, so the UI can be checked with real content. `BREEZY_DEMO_ACTIVITY='Downloading main…|12|41'` shows a fake progress banner (debug builds). `BREEZY_DEFAULTS` sets saved UI state before launch, for testing restoration, for example `BREEZY_DEFAULTS='root.selectionByBranch={"phase2":"history-of-flash"}' scripts/simulator.sh`.
 
 ## Where things are
 

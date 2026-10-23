@@ -25,7 +25,24 @@ final class AppModel {
 
     /// Whether the device has a network path. Syncing is skipped while false.
     private(set) var isOnline = true
-    private(set) var isBusy = false
+    /// The slow operation in progress, shown as a banner (with file counts while downloading). nil when idle.
+    struct Activity: Equatable {
+        var title: String
+        var done = 0
+        var total = 0
+    }
+    private(set) var activity: Activity?
+    var isBusy: Bool { activity != nil }
+
+    private func begin(_ title: String) { activity = Activity(title: title) }
+    private func end() { activity = nil }
+    /// Feeds download counts into the current activity.
+    private var progress: SiteWorkspace.Progress {
+        { [weak self] done, total in
+            self?.activity?.done = done
+            self?.activity?.total = total
+        }
+    }
     /// The last sync failure that was not simply "offline".
     private(set) var lastSyncError: String?
 
@@ -109,6 +126,14 @@ final class AppModel {
         }
         monitor.start(queue: DispatchQueue(label: "org.taun.Breezy.network"))
         openLocal()
+        #if DEBUG
+        // For checking the activity banner without a network: BREEZY_DEMO_ACTIVITY="Downloading phase2…|12|41".
+        if let demo = ProcessInfo.processInfo.environment["BREEZY_DEMO_ACTIVITY"], !demo.isEmpty {
+            let p = demo.split(separator: "|")
+            activity = Activity(title: String(p[0]), done: p.count > 1 ? Int(p[1]) ?? 0 : 0, total: p.count > 2 ? Int(p[2]) ?? 0 : 0)
+            return
+        }
+        #endif
         await sync()
     }
 
@@ -171,8 +196,8 @@ final class AppModel {
     /// Refreshes branch names and pull requests, downloads the branch if there is no local copy, then reconciles and pushes.
     func sync() async {
         guard isOnline, let client, let store, !isBusy else { return }
-        isBusy = true
-        defer { isBusy = false }
+        begin("Syncing with GitHub…")
+        defer { end() }
         do {
             async let main = client.defaultBranch()
             async let remote = client.branches()
@@ -180,7 +205,8 @@ final class AppModel {
             repoState.remoteBranches = try await remote.map(\.name)
             if workspace == nil {
                 let branch = repoState.lastBranch.flatMap { repoState.remoteBranches.contains($0) ? $0 : nil } ?? repoState.defaultBranch
-                workspace = try await SiteWorkspace.download(branch, client: client, store: store)
+                activity?.title = "Downloading \(branch)…"
+                workspace = try await SiteWorkspace.download(branch, client: client, store: store, progress: progress)
                 repoState.lastBranch = branch
             }
             if repoState.websiteURL == nil, let repo {
@@ -190,7 +216,7 @@ final class AppModel {
             pruneDeletedBranches(store)
             try store.saveRepoState(repoState)
             if let ws = workspace {
-                switch try await ws.sync(client: client) {
+                switch try await ws.sync(client: client, progress: progress) {
                 case .conflicts: showConflicts = true
                 case .branchDeleted(hasLocalChanges: false): try await leaveDeletedBranch(ws.branch, client: client, store: store)
                 case .branchDeleted(hasLocalChanges: true): showBranchDeleted = true
@@ -218,13 +244,14 @@ final class AppModel {
         let main = repoState.defaultBranch
         let next: SiteWorkspace
         if let local = try SiteWorkspace.open(main, store: store) { next = local } else {
-            next = try await SiteWorkspace.download(main, client: client, store: store)
+            activity = Activity(title: "Downloading \(main)…")
+            next = try await SiteWorkspace.download(main, client: client, store: store, progress: progress)
         }
         workspace = next
         try? store.removeBranch(name)
         repoState.lastBranch = main
         try store.saveRepoState(repoState)
-        if case .conflicts = try await next.sync(client: client) { showConflicts = true }
+        if case .conflicts = try await next.sync(client: client, progress: progress) { showConflicts = true }
         errorMessage = "“\(name)” was published or deleted on another device, so Breezy switched to \(main)."
     }
 
@@ -242,17 +269,17 @@ final class AppModel {
     func moveEditsToNewBranch(_ name: String) async {
         guard let ws = workspace, let client, let store else { return }
         guard isOnline else { errorMessage = "Moving the edits needs a connection to read \(defaultBranch)."; return }
-        isBusy = true
+        begin("Moving changes to \(name)…")
         do {
-            let moved = try await ws.moveEdits(toNewBranch: name, from: defaultBranch, client: client)
+            let moved = try await ws.moveEdits(toNewBranch: name, from: defaultBranch, client: client, progress: progress)
             workspace = moved
             repoState.lastBranch = name
             try store.saveRepoState(repoState)
             showBranchDeleted = false
-            isBusy = false
+            end()
             if !moved.conflicts.isEmpty { showConflicts = true } else { await sync() }
         } catch {
-            isBusy = false
+            end()
             handle(error)
         }
     }
@@ -286,9 +313,9 @@ final class AppModel {
                     errorMessage = "“\(name)” is not on this device yet. Connect to the internet to download it."
                     return
                 }
-                isBusy = true
-                defer { isBusy = false }
-                workspace = try await SiteWorkspace.download(name, client: client, store: store)
+                begin("Downloading \(name)…")
+                defer { end() }
+                workspace = try await SiteWorkspace.download(name, client: client, store: store, progress: progress)
             }
             repoState.lastBranch = name
             try store.saveRepoState(repoState)
@@ -348,7 +375,7 @@ final class AppModel {
     func openPullRequest(title: String, body: String) async {
         guard let client else { return }
         let head = currentBranch, base = defaultBranch
-        await online {
+        await online("Opening pull request…") {
             _ = try await client.createPullRequest(title: title, head: head, base: base, body: body)
             pullRequests = try await client.openPullRequests()
         }
@@ -356,7 +383,7 @@ final class AppModel {
 
     func refreshPullRequest(_ number: Int) async {
         guard let client else { return }
-        await online {
+        await online("Checking pull request…") {
             let pr = try await client.pullRequest(number)
             if let i = pullRequests.firstIndex(where: { $0.number == number }) { pullRequests[i] = pr }
         }
@@ -364,7 +391,7 @@ final class AppModel {
 
     func merge(_ pr: PullRequest, method: MergeMethod, deleteBranch: Bool) async {
         guard let client else { return }
-        await online {
+        await online("Merging pull request…") {
             try await client.merge(pr.number, method: method)
             if deleteBranch, pr.head != defaultBranch {
                 try? await client.deleteBranch(pr.head)
@@ -380,13 +407,13 @@ final class AppModel {
         }
     }
 
-    private func online(_ op: () async throws -> Void) async {
+    private func online(_ title: String, _ op: () async throws -> Void) async {
         guard isOnline else {
             errorMessage = "Pull requests need a connection."
             return
         }
-        isBusy = true
-        defer { isBusy = false }
+        begin(title)
+        defer { end() }
         do { try await op() } catch { handle(error) }
     }
 
@@ -417,11 +444,11 @@ final class AppModel {
             return false
         }
         let branch = ws.branch
-        isBusy = true
+        begin("Publishing \(branch)…")
         do {
             let result = try await Publisher.publish(branch: branch, into: defaultBranch, title: "Publish \(branch)",
                                                      method: method, deleteBranch: deleteBranch, client: client)
-            isBusy = false
+            end()
             watchDeploy(result.mergeCommit)
             if deleteBranch {
                 repoState.remoteBranches.removeAll { $0 == branch }
@@ -433,7 +460,7 @@ final class AppModel {
             }
             return true
         } catch {
-            isBusy = false
+            end()
             handle(error)
             return false
         }

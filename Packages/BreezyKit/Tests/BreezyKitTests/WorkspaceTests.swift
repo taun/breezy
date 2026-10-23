@@ -239,3 +239,19 @@ func client(_ m: MockTransport) -> GitHubClient { GitHubClient(repo: RepoRef(own
         #expect(store.hasLocalChanges("local-only")) // never pushed
     }
 }
+
+@MainActor @Suite struct ProgressTests {
+    @Test func downloadReportsEachFileThenSkipsFilesAlreadyOnDevice() async throws {
+        let store = tempStore()
+        var reports: [String] = []
+        _ = try await SiteWorkspace.download("main", client: client(.site()), store: store) { reports.append("\($0)/\($1)") }
+        #expect(reports == ["0/2", "1/2", "2/2"])
+        // A second branch with the same files downloads nothing new.
+        let m = MockTransport.site()
+        m.on("GET /git/ref/heads/other", ["object": ["sha": "c1"]])
+        reports = []
+        _ = try await SiteWorkspace.download("other", client: client(m), store: store) { reports.append("\($0)/\($1)") }
+        #expect(reports == ["0/0"])
+        #expect(m.count("GET /git/blobs/ba") == 0)
+    }
+}

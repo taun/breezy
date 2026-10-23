@@ -70,7 +70,7 @@ struct RootView: View {
                 .toolbar { toolbar(ws) }
                 #endif
             } else if model.isBusy {
-                ProgressView("Downloading from GitHub…")
+                FirstDownloadView()
             } else if !model.hasToken {
                 NavigationStack { SettingsView() }
             } else if !model.isOnline {
@@ -89,14 +89,16 @@ struct RootView: View {
                 case .publish: PublishView()
                 }
             }
+            .activityBanner()
             .macSheetFrame(minWidth: 460, minHeight: 480)
         }
         .sheet(isPresented: $model.showBranchDeleted) {
-            NavigationStack { BranchDeletedView() }.macSheetFrame(minWidth: 480, minHeight: 380)
+            NavigationStack { BranchDeletedView() }.activityBanner().macSheetFrame(minWidth: 480, minHeight: 380)
         }
         .sheet(isPresented: $model.showConflicts) {
-            NavigationStack { ConflictsView() }.macSheetFrame(minWidth: 560, minHeight: 520)
+            NavigationStack { ConflictsView() }.activityBanner().macSheetFrame(minWidth: 560, minHeight: 520)
         }
+        .activityBanner()
         .onChange(of: model.wantsSettings) { _, wants in
             if wants { sheetRaw = Sheet.settings.rawValue; model.wantsSettings = false }
         }

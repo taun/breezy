@@ -7,6 +7,7 @@ All notable changes to Breezy are documented here. The format follows [Keep a Ch
 ### Added
 
 - **View › Show/Hide Sidebar** (⌃⌘S) on the Mac and with an iPad keyboard.
+- **Progress for slow operations:** a banner at the bottom of the window (and of open sheets) says what Breezy is doing — downloading a branch, syncing, publishing, opening or merging a pull request — with a progress bar and file count while files download. The first download shows the same progress full screen.
 
 ### Fixed
 

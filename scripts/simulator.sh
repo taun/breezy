@@ -8,6 +8,7 @@
 #        BREEZY_BRANCH    branch name to present the seeded copy as (default: the site repo's current branch)
 #        BREEZY_DEFAULTS  extra "key=value" pairs (space-separated) written to the app's preferences before launch,
 #                         e.g. 'root.compactColumn=detail editor.focus=history-of-flash|title' to test state restoration
+#        BREEZY_DEMO_ACTIVITY  debug builds: show a fake activity banner, "title|done|total" (e.g. 'Downloading main…|12|41')
 set -eu
 cd "$(dirname "$0")/.."
 SITE="${BREEZY_SITE_DIR:-../taun.github.io}"
@@ -53,7 +54,7 @@ PY
 for pair in ${BREEZY_DEFAULTS:-}; do
   xcrun simctl spawn "$UDID" defaults write org.taun.Breezy "${pair%%=*}" -string "${pair#*=}"
 done
-xcrun simctl launch "$UDID" org.taun.Breezy >/dev/null
+SIMCTL_CHILD_BREEZY_DEMO_ACTIVITY="${BREEZY_DEMO_ACTIVITY:-}" xcrun simctl launch "$UDID" org.taun.Breezy >/dev/null
 sleep 4
 xcrun simctl io "$UDID" screenshot "$SHOT" >/dev/null
 echo "Screenshot: $SHOT"
