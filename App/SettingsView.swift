@@ -1,0 +1,48 @@
+import SwiftUI
+
+struct SettingsView: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    @State private var repo = ""
+    @State private var token = ""
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("owner/name", text: $repo)
+                    .autocorrectionDisabled()
+                    #if os(iOS)
+                    .textInputAutocapitalization(.never)
+                    #endif
+            } header: {
+                Text("Repository")
+            } footer: {
+                Text("The GitHub repository of the Eleventy site.")
+            }
+            Section {
+                SecureField(model.hasToken ? "Saved in the Keychain (enter to replace)" : "github_pat_…", text: $token)
+            } header: {
+                Text("Personal access token")
+            } footer: {
+                Text("Create a fine-grained token for this repository with **Contents** and **Pull requests** set to read and write. It is stored only in this device's Keychain.")
+            }
+            Section {
+                Button("Save and connect") {
+                    Task { if await model.saveSettings(repo: repo, token: token) { token = ""; dismiss() } }
+                }
+                .disabled(repo.isEmpty || (!model.hasToken && token.isEmpty) || model.isBusy)
+                if model.hasToken {
+                    Button("Remove token", role: .destructive) { model.signOut() }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle("Settings")
+        .toolbar {
+            if model.workspace != nil {
+                ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
+            }
+        }
+        .onAppear { repo = model.repoString }
+    }
+}

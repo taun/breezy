@@ -58,7 +58,14 @@ public enum YAMLFormat {
         return quoted(s)
     }
 
-    public static func quoted(_ s: String) -> String {
+    /// URLs and paths stay unquoted (as in the site's files) when YAML reads them back unchanged.
+    public static func scalarOrURL(_ s: String) -> String {
+        let safe = s.range(of: #"^[A-Za-z0-9/][A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]*$"#, options: .regularExpression) != nil
+            && !s.contains(": ") && !s.contains(" #") && !reserved.contains(s.lowercased())
+        return safe ? s : quoted(s)
+    }
+
+        public static func quoted(_ s: String) -> String {
         let escaped = s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
             .replacingOccurrences(of: "\n", with: "\\n")
         return "\"\(escaped)\""

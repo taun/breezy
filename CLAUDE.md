@@ -19,8 +19,12 @@ A macOS / iOS / iPadOS app (SwiftUI, multiplatform) for editing the content of t
 
 ## Structure
 
-- `Packages/BreezyKit`: the platform-free core, tested with Swift Testing. Node file model (`NodeFile`), lossless front matter editing (`FrontMatterText`: line-based, so unknown keys, comments, order and spacing are preserved exactly), date and link semantics (`NodeDate`, `Relations`), and `Validator`. Depends on Yams.
-- The app target (not created yet) should be a thin SwiftUI layer over BreezyKit plus a GitHub client. Put anything testable in BreezyKit.
+- `Packages/BreezyKit`: the platform-free core, tested with Swift Testing. Put anything testable here.
+  - Node files: `NodeFile`, lossless front matter editing (`FrontMatterText`: line-based, so unknown keys, comments, order and spacing are preserved exactly), `NodeDate`, `Relations`, `Validator`. Depends on Yams.
+  - `GitHub/`: `GitHubClient` (branches, git data API reads, one-commit-per-save via blobs/trees/commits/ref update with a moved-branch check, pull requests and merge), `HTTPTransport` (the network seam; tests use `MockTransport` with routes keyed `"METHOD /path?query"`), `TokenStore` (Keychain, or in-memory for tests).
+  - `Workspace/SiteWorkspace`: one loaded branch (`src/nodes/*.md`, top level only, plus `src/assets` paths), edits in memory, `changes` diffed against the loaded text, `commit` as a single commit then reload. `@MainActor @Observable`.
+- `App/`: the SwiftUI app, one multiplatform target (macOS, iOS, iPadOS). `AppModel` owns settings, the workspace, branches and PRs; views are `RootView` (split view + toolbar), `NodeListView` (search, type filter, new/delete), `NodeEditorView` (fields, date, media with asset picker, body edit/preview), `LinkEditorView`, `BranchesView` (switch/create/delete branches, open/merge PRs), `CommitView`, `SettingsView`, `MarkdownPreview`.
+- `project.yml` is the XcodeGen spec; `Breezy.xcodeproj` is generated and not committed.
 
 ### Rules that matter when editing node files
 
@@ -33,9 +37,10 @@ A macOS / iOS / iPadOS app (SwiftUI, multiplatform) for editing the content of t
 ## Commands
 
 ```
-cd Packages/BreezyKit
-swift build
-swift test --scratch-path /tmp/breezy-build
+cd Packages/BreezyKit && swift test --scratch-path /tmp/breezy-build      # core tests
+xcodegen generate                                                          # (re)create Breezy.xcodeproj after adding files
+xcodebuild -project Breezy.xcodeproj -scheme Breezy -destination 'platform=macOS' -derivedDataPath /tmp/breezy-dd CODE_SIGNING_ALLOWED=NO build
+xcodebuild -project Breezy.xcodeproj -scheme Breezy -destination 'generic/platform=iOS Simulator' -derivedDataPath /tmp/breezy-dd CODE_SIGNING_ALLOWED=NO build
 ```
 
-`swift test` fails at code signing when `.build` is inside `~/Documents` ("resource fork, Finder information, or similar detritus not allowed"), so keep the scratch path outside it. The fixture tests look for the site repo at `../taun.github.io` (sibling of this repo); set `BREEZY_SITE_DIR` to override.
+Builds and tests fail at code signing when their output is inside `~/Documents` ("resource fork, Finder information, or similar detritus not allowed"), so keep `--scratch-path` / `-derivedDataPath` outside it. To run on a device, open the project in Xcode and set a development team (automatic signing); the Keychain token store needs a signed app. The fixture tests look for the site repo at `../taun.github.io` (sibling of this repo); set `BREEZY_SITE_DIR` to override.
