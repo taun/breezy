@@ -39,7 +39,11 @@ struct RootView: View {
 
     private var columns: Binding<NavigationSplitViewVisibility> {
         Binding(
-            get: { ["all": .all, "doubleColumn": .doubleColumn, "detailOnly": .detailOnly][columnsRaw] ?? .automatic },
+            get: {
+                let saved: NavigationSplitViewVisibility = ["all": .all, "doubleColumn": .doubleColumn, "detailOnly": .detailOnly][columnsRaw] ?? .automatic
+                // With nothing selected the list is always shown: a hidden list and an empty editor is a blank window.
+                return saved == .detailOnly && selection.wrappedValue == nil ? .all : saved
+            },
             set: { v in columnsRaw = v == .all ? "all" : v == .doubleColumn ? "doubleColumn" : v == .detailOnly ? "detailOnly" : "automatic" })
     }
     @Environment(\.openURL) private var openURL

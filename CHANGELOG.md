@@ -4,6 +4,14 @@ All notable changes to Breezy are documented here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Added
+
+- **View › Show/Hide Sidebar** (⌃⌘S) on the Mac and with an iPad keyboard.
+
+### Fixed
+
+- Hiding the node list with no node selected could relaunch into an empty window with no visible way back. With nothing selected, the list is now always shown.
+
 ## [1.0.0] - 2026-10-23
 
 First release. Breezy edits the content of the taun.org Eleventy site (`taun/taun.github.io`) on macOS, iOS and iPadOS, through GitHub.

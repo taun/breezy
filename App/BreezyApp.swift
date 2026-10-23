@@ -15,5 +15,9 @@ struct BreezyApp: App {
                     if phase == .active { Task { await model.refreshToken(); await model.sync() } }
                 }
         }
+        .commands {
+            // View ▸ Show/Hide Sidebar (⌃⌘S) on the Mac and with an iPad keyboard.
+            SidebarCommands()
+        }
     }
 }
