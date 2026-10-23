@@ -36,7 +36,7 @@ struct ConflictsView: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Later") { dismiss() } } }
             .sheet(item: editing) { c in
                 NavigationStack { MergeEditor(conflict: c, mine: ws.localText(path: c.path) ?? "", theirs: ws.text(sha: c.remoteSHA) ?? "") }
-                    .frame(minWidth: 640, minHeight: 560)
+                    .macSheetFrame(minWidth: 640, minHeight: 560)
             }
         }
     }

@@ -45,7 +45,7 @@ struct RootView: View {
         Group {
             if let ws = model.workspace {
                 NavigationSplitView(columnVisibility: columns) {
-                    NodeListView(workspace: ws, selection: selection)
+                    sidebar(ws)
                 } detail: {
                     if let slug = selection.wrappedValue, ws.nodes[slug] != nil {
                         NodeEditorView(workspace: ws, slug: slug).id(slug)
@@ -53,7 +53,9 @@ struct RootView: View {
                         ContentUnavailableView("No node selected", systemImage: "doc.text", description: Text("Choose a node, or add one with +."))
                     }
                 }
+                #if os(macOS)
                 .toolbar { toolbar(ws) }
+                #endif
             } else if model.isBusy {
                 ProgressView("Downloading from GitHub…")
             } else if !model.hasToken {
@@ -74,10 +76,13 @@ struct RootView: View {
                 case .publish: PublishView()
                 }
             }
-            .frame(minWidth: 460, minHeight: 480)
+            .macSheetFrame(minWidth: 460, minHeight: 480)
         }
         .sheet(isPresented: $model.showConflicts) {
-            NavigationStack { ConflictsView() }.frame(minWidth: 560, minHeight: 520)
+            NavigationStack { ConflictsView() }.macSheetFrame(minWidth: 560, minHeight: 520)
+        }
+        .onChange(of: model.wantsSettings) { _, wants in
+            if wants { sheetRaw = Sheet.settings.rawValue; model.wantsSettings = false }
         }
         .alert("Breezy", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("OK", role: .cancel) {}
@@ -92,22 +97,69 @@ struct RootView: View {
         Task { await model.switchBranch(name) }
     }
 
+    /// Branch list (switch) plus the branch management sheet; used by the Mac toolbar menu and the iOS title menu.
+    @ViewBuilder
+    private func branchMenu(_ ws: SiteWorkspace) -> some View {
+        Picker("Branch", selection: Binding(get: { ws.branch }, set: { requestSwitch(to: $0, in: ws) })) {
+            ForEach(model.branchNames, id: \.self) { name in
+                let onDevice = model.isOnDevice(name)
+                Text(name + (name == model.defaultBranch ? " (default)" : "") + (onDevice ? "" : " (not on device)"))
+                    .tag(name)
+                    .selectionDisabled(!onDevice && !model.isOnline)
+            }
+        }
+        .pickerStyle(.inline)
+        Divider()
+        Button { sheetRaw = Sheet.branches.rawValue } label: { Label("Manage Branches & Pull Requests…", systemImage: "arrow.triangle.branch") }
+    }
+
+    /// The node list column. On iPhone and iPad its bar carries everything: the title is the branch (tap for the
+    /// branch menu), sync status on the left, commit and the other actions on the right.
+    @ViewBuilder
+    private func sidebar(_ ws: SiteWorkspace) -> some View {
+        #if os(iOS)
+        NodeListView(workspace: ws, selection: selection)
+            .navigationTitle(ws.branch)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleMenu { branchMenu(ws) }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { SyncStatusButton(compact: true) }
+                if ws.hasChanges {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button { sheetRaw = Sheet.commit.rawValue } label: { Text("Commit (\(ws.changes.count))").bold() }
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) { moreMenu(ws) }
+            }
+        #else
+        NodeListView(workspace: ws, selection: selection)
+        #endif
+    }
+
+    private func moreMenu(_ ws: SiteWorkspace) -> some View {
+        Menu {
+            Button { sheetRaw = Sheet.commit.rawValue } label: { Label("Commit (\(ws.changes.count))", systemImage: "checkmark.circle") }
+                .disabled(!ws.hasChanges)
+            if !model.isOnDefaultBranch {
+                Button { sheetRaw = Sheet.publish.rawValue } label: { Label("Publish \(ws.branch)…", systemImage: "paperplane") }
+            }
+            if let url = model.websiteURL {
+                Button { openURL(url) } label: { Label("View Website", systemImage: "safari") }
+            }
+            Divider()
+            Button { sheetRaw = Sheet.branches.rawValue } label: { Label("Branches & Pull Requests", systemImage: "arrow.triangle.branch") }
+            Button { sheetRaw = Sheet.settings.rawValue } label: { Label("Settings", systemImage: "gearshape") }
+        } label: {
+            Label("More", systemImage: "ellipsis.circle")
+        }
+    }
+
     @ToolbarContentBuilder
     private func toolbar(_ ws: SiteWorkspace) -> some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
             SyncStatusButton()
             Menu {
-                Picker("Branch", selection: Binding(get: { ws.branch }, set: { requestSwitch(to: $0, in: ws) })) {
-                    ForEach(model.branchNames, id: \.self) { name in
-                        let onDevice = model.isOnDevice(name)
-                        Text(name + (name == model.defaultBranch ? " (default)" : "") + (onDevice ? "" : " (not on device)"))
-                            .tag(name)
-                            .selectionDisabled(!onDevice && !model.isOnline)
-                    }
-                }
-                .pickerStyle(.inline)
-                Divider()
-                Button("Manage Branches & Pull Requests…") { sheetRaw = Sheet.branches.rawValue }
+                branchMenu(ws)
             } label: {
                 Label(ws.branch, systemImage: "arrow.triangle.branch").labelStyle(.titleAndIcon)
             }
@@ -133,16 +185,26 @@ struct RootView: View {
 /// Shows offline / pending / conflicts / synced; tapping syncs now, or opens the conflicts.
 struct SyncStatusButton: View {
     @Environment(AppModel.self) private var model
+    /// Icon only (narrow iPhone bars); the text is still read by VoiceOver.
+    var compact = false
 
     var body: some View {
         let (text, icon, color) = describe(model.syncStatus)
         Button {
-            if case .conflicts = model.syncStatus { model.showConflicts = true } else { Task { await model.sync() } }
+            switch model.syncStatus {
+            case .conflicts: model.showConflicts = true
+            case .noToken: model.wantsSettings = true
+            default: Task { await model.sync() }
+            }
         } label: {
             if model.syncStatus == .syncing {
                 ProgressView().controlSize(.small)
             } else {
-                Label(text, systemImage: icon).foregroundStyle(color).labelStyle(.titleAndIcon)
+                if compact {
+                    Label(text, systemImage: icon).foregroundStyle(color).labelStyle(.iconOnly)
+                } else {
+                    Label(text, systemImage: icon).foregroundStyle(color).labelStyle(.titleAndIcon)
+                }
             }
         }
         .disabled(model.syncStatus == .syncing)
@@ -152,6 +214,7 @@ struct SyncStatusButton: View {
     private func describe(_ s: AppModel.SyncStatus) -> (String, String, Color) {
         switch s {
         case .offline: ("Offline", "wifi.slash", .secondary)
+        case .noToken: ("No GitHub token", "key.slash", .orange)
         case .syncing: ("Syncing", "arrow.triangle.2.circlepath", .secondary)
         case let .conflicts(n): ("\(n) conflict\(n == 1 ? "" : "s")", "exclamationmark.triangle.fill", .orange)
         case let .pending(n): (n == 0 ? "Not pushed" : "\(n) to push", "arrow.up.circle", .blue)

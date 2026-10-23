@@ -31,6 +31,8 @@ final class AppModel {
 
     var errorMessage: String?
     var showConflicts = false
+    /// Set to ask the window to open Settings (e.g. from the sync status when there is no token).
+    var wantsSettings = false
 
     enum DeployStatus: Equatable {
         case none, waiting, running, live, failed(URL?), unknown
@@ -59,13 +61,14 @@ final class AppModel {
     func isOnDevice(_ branch: String) -> Bool { store?.branchState(named: branch) != nil }
 
     enum SyncStatus: Equatable {
-        case offline, syncing, conflicts(Int), pending(Int), failed, synced
+        case offline, syncing, conflicts(Int), noToken, pending(Int), failed, synced
     }
 
     var syncStatus: SyncStatus {
         guard let ws = workspace else { return isOnline ? .synced : .offline }
         if isBusy || ws.isSyncing { return .syncing }
         if !ws.conflicts.isEmpty { return .conflicts(ws.conflicts.count) }
+        if !hasToken { return .noToken }
         if !isOnline { return .offline }
         if lastSyncError != nil { return .failed }
         if !ws.queue.isEmpty || !ws.state.existsOnRemote { return .pending(ws.queue.count) }

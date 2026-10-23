@@ -33,7 +33,9 @@ struct NodeListView: View {
             }
         }
         .searchable(text: $search, prompt: "Title, slug or tag")
-        .navigationTitle("Nodes")
+        #if os(macOS)
+        .navigationTitle("Nodes") // on iPhone/iPad the title is the branch menu (RootView)
+        #endif
         .toolbar {
             ToolbarItem {
                 Menu {
@@ -48,7 +50,7 @@ struct NodeListView: View {
             ToolbarItem { Button { showNew = true } label: { Label("New Node", systemImage: "plus") } }
         }
         .sheet(isPresented: $showNew) {
-            NavigationStack { NewNodeView(workspace: workspace, selection: $selection) }.frame(minWidth: 420, minHeight: 320)
+            NavigationStack { NewNodeView(workspace: workspace, selection: $selection) }.macSheetFrame(minWidth: 420, minHeight: 320)
         }
         .refreshable { await model.sync() }
     }
