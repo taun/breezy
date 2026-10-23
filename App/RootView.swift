@@ -33,7 +33,7 @@ struct RootView: View {
         .sheet(item: $sheet) { s in
             NavigationStack {
                 switch s {
-                case .settings: SettingsView()
+                case .settings: SettingsView(close: { sheet = nil })
                 case .branches: BranchesView()
                 case .commit: CommitView()
                 }

@@ -2,7 +2,8 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.dismiss) private var dismiss
+    /// Set when shown as a sheet. Never call `dismiss` here: as a window's root view on macOS it closes the window.
+    var close: (() -> Void)?
     @State private var repo = ""
     @State private var token = ""
 
@@ -28,7 +29,7 @@ struct SettingsView: View {
             }
             Section {
                 Button("Save and connect") {
-                    Task { if await model.saveSettings(repo: repo, token: token) { token = ""; dismiss() } }
+                    Task { if await model.saveSettings(repo: repo, token: token) { token = ""; close?() } }
                 }
                 .disabled(repo.isEmpty || (!model.hasToken && token.isEmpty) || model.isBusy)
                 if model.hasToken {
@@ -39,8 +40,8 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .navigationTitle("Settings")
         .toolbar {
-            if model.workspace != nil {
-                ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
+            if let close {
+                ToolbarItem(placement: .cancellationAction) { Button("Close") { close() } }
             }
         }
         .onAppear { repo = model.repoString }
