@@ -4,6 +4,7 @@ import SwiftUI
 struct RootView: View {
     @Environment(AppModel.self) private var model
     @State private var sheet: Sheet?
+    @State private var pendingSwitch: String?
 
     enum Sheet: String, Identifiable {
         case settings, branches, commit
@@ -40,6 +41,14 @@ struct RootView: View {
             }
             .frame(minWidth: 460, minHeight: 480)
         }
+        .confirmationDialog("Discard uncommitted changes?", isPresented: Binding(get: { pendingSwitch != nil }, set: { if !$0 { pendingSwitch = nil } })) {
+            Button("Discard and Switch to \(pendingSwitch ?? "")", role: .destructive) {
+                if let name = pendingSwitch { Task { await model.switchBranch(name) } }
+                pendingSwitch = nil
+            }
+        } message: {
+            Text("Switching branches reloads all nodes. Commit first, or use Manage Branches to create a new branch that keeps the edits.")
+        }
         .alert("Breezy", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -47,14 +56,29 @@ struct RootView: View {
         }
     }
 
+    private func requestSwitch(to name: String, in ws: SiteWorkspace) {
+        guard name != ws.branch else { return }
+        if ws.hasChanges { pendingSwitch = name } else { Task { await model.switchBranch(name) } }
+    }
+
     @ToolbarContentBuilder
     private func toolbar(_ ws: SiteWorkspace) -> some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
             if model.isBusy { ProgressView().controlSize(.small) }
-            Button { sheet = .branches } label: {
+            Menu {
+                Picker("Branch", selection: Binding(get: { ws.branch }, set: { requestSwitch(to: $0, in: ws) })) {
+                    ForEach(model.branches) { b in
+                        Text(b.name == model.defaultBranch ? "\(b.name) (default)" : b.name).tag(b.name)
+                    }
+                }
+                .pickerStyle(.inline)
+                Divider()
+                Button("Manage Branches & Pull Requests…") { sheet = .branches }
+                Button("Refresh Branch List") { Task { await model.refresh() } }
+            } label: {
                 Label(ws.branch, systemImage: "arrow.triangle.branch").labelStyle(.titleAndIcon)
             }
-            .help("Branches and pull requests")
+            .help("Switch branch, or manage branches and pull requests")
             Button { sheet = .commit } label: {
                 Label("Commit (\(ws.changes.count))", systemImage: "checkmark.circle")
             }
