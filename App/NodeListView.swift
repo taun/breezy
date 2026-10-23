@@ -47,12 +47,12 @@ struct NodeListView: View {
         .sheet(isPresented: $showNew) {
             NavigationStack { NewNodeView(workspace: workspace) }.frame(minWidth: 420, minHeight: 320)
         }
-        .refreshable { await model.reload() }
+        .refreshable { await model.sync() }
     }
 
     private func delete(_ slug: String) {
         if model.selection == slug { model.selection = nil }
-        workspace.deleteNode(slug)
+        do { try workspace.deleteNode(slug) } catch { model.errorMessage = error.localizedDescription }
     }
 }
 

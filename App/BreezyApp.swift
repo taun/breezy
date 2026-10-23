@@ -8,7 +8,7 @@ struct BreezyApp: App {
         WindowGroup {
             RootView()
                 .environment(model)
-                .task { await model.connectIfConfigured() }
+                .task { await model.start() }
         }
     }
 }

@@ -10,7 +10,10 @@ A macOS / iOS / iPadOS app (SwiftUI, multiplatform) for editing the content of t
 
 ## Decisions made
 
-- **Storage:** the GitHub API, not a local clone (iOS has no git). Branches are first-class: create, select, commit to, and merge them.
+- **Offline-first:** everything reads and edits a local copy on disk; GitHub is only the sync. Works with no network once a branch has been downloaded (for example on a plane). Edits are saved to disk as they happen.
+- **Storage:** plain files in the app's Documents folder (visible in the Files app; on macOS via "Show Local Files in Finder"), synced with the GitHub API, not a git clone (iOS has no git). Every branch opened stays on the device. Branches are first-class: create (offline too), select, commit to, and merge them.
+- **Offline commits** queue on the device and are pushed in order as separate GitHub commits.
+- **Conflicts** (a file changed both locally and on GitHub since the last sync) are resolved file by file: keep mine, use GitHub's, or edit a merged version. Nothing is pushed while any are open.
 - **Merging:** open a pull request and merge it through the API (merge / squash / rebase choice). GitHub reports conflicts; Breezy does not resolve file conflicts in v1.
 - **Auth:** a fine-grained personal access token (contents + pull requests, this repo only), stored in the Keychain.
 - **Preview:** native Markdown rendering in the app. No web view of the deployed site.
@@ -22,8 +25,9 @@ A macOS / iOS / iPadOS app (SwiftUI, multiplatform) for editing the content of t
 - `Packages/BreezyKit`: the platform-free core, tested with Swift Testing. Put anything testable here.
   - Node files: `NodeFile`, lossless front matter editing (`FrontMatterText`: line-based, so unknown keys, comments, order and spacing are preserved exactly), `NodeDate`, `Relations`, `Validator`. Depends on Yams.
   - `GitHub/`: `GitHubClient` (branches, git data API reads, one-commit-per-save via blobs/trees/commits/ref update with a moved-branch check, pull requests and merge), `HTTPTransport` (the network seam; tests use `MockTransport` with routes keyed `"METHOD /path?query"`), `TokenStore` (Keychain, or in-memory for tests).
-  - `Workspace/SiteWorkspace`: one loaded branch (`src/nodes/*.md`, top level only, plus `src/assets` paths), edits in memory, `changes` diffed against the loaded text, `commit` as a single commit then reload. `@MainActor @Observable`.
-- `App/`: the SwiftUI app, one multiplatform target (macOS, iOS, iPadOS). `AppModel` owns settings, the workspace, branches and PRs; views are `RootView` (split view + toolbar), `NodeListView` (search, type filter, new/delete), `NodeEditorView` (fields, date, media with asset picker, body edit/preview), `LinkEditorView`, `BranchesView` (switch/create/delete branches, open/merge PRs), `CommitView`, `SettingsView`, `MarkdownPreview`.
+  - `Storage/`: `LocalStore`, the on-device copy (layout documented at the top of `LocalStore.swift`: `objects/<blob-sha>`, `branches/<branch>/{state.json,queue.json,working/}`, `repo.json`), its Codable models, and `GitBlob` (git blob IDs computed locally, so changes are detected without the network). Writes are atomic; `state.json` is written after the files it refers to.
+  - `Workspace/SiteWorkspace`: one branch, offline-first. Displayed nodes = base snapshot + queued commits + working edits. Edits persist immediately; `commit` queues; `sync(client:)` creates the branch on GitHub if needed, adopts GitHub's newer files that were not touched locally, records conflicts for those that were (`resolve`), then pushes the queue one commit at a time with the moved-branch check. `branchOff` creates a branch locally. `@MainActor @Observable`.
+- `App/`: the SwiftUI app, one multiplatform target (macOS, iOS, iPadOS). `AppModel` owns settings, the local store, the workspace, branches and PRs, watches the network (`NWPathMonitor`) and syncs when it comes back; network errors mean "offline", not an alert; views are `RootView` (split view + toolbar), `NodeListView` (search, type filter, new/delete), `NodeEditorView` (fields, date, media with asset picker, body edit/preview), `LinkEditorView`, `BranchesView` (switch/create/delete branches, open/merge PRs), `CommitView`, `ConflictsView` (+ `MergeEditor`), `SettingsView`, `MarkdownPreview`, and `SyncStatusButton` in the toolbar.
 - `project.yml` is the XcodeGen spec; `Breezy.xcodeproj` is generated and not committed.
 
 ### Rules that matter when editing node files

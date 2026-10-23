@@ -4,7 +4,6 @@ import SwiftUI
 struct RootView: View {
     @Environment(AppModel.self) private var model
     @State private var sheet: Sheet?
-    @State private var pendingSwitch: String?
 
     enum Sheet: String, Identifiable {
         case settings, branches, commit
@@ -26,7 +25,10 @@ struct RootView: View {
                 }
                 .toolbar { toolbar(ws) }
             } else if model.isBusy {
-                ProgressView("Connecting to GitHub…")
+                ProgressView("Downloading from GitHub…")
+            } else if model.hasToken && !model.isOnline {
+                ContentUnavailableView("Not on this device yet", systemImage: "wifi.slash",
+                                       description: Text("Connect to the internet once to download the site. After that Breezy works offline."))
             } else {
                 NavigationStack { SettingsView() }
             }
@@ -41,13 +43,8 @@ struct RootView: View {
             }
             .frame(minWidth: 460, minHeight: 480)
         }
-        .confirmationDialog("Discard uncommitted changes?", isPresented: Binding(get: { pendingSwitch != nil }, set: { if !$0 { pendingSwitch = nil } })) {
-            Button("Discard and Switch to \(pendingSwitch ?? "")", role: .destructive) {
-                if let name = pendingSwitch { Task { await model.switchBranch(name) } }
-                pendingSwitch = nil
-            }
-        } message: {
-            Text("Switching branches reloads all nodes. Commit first, or use Manage Branches to create a new branch that keeps the edits.")
+        .sheet(isPresented: $model.showConflicts) {
+            NavigationStack { ConflictsView() }.frame(minWidth: 560, minHeight: 520)
         }
         .alert("Breezy", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("OK", role: .cancel) {}
@@ -56,25 +53,28 @@ struct RootView: View {
         }
     }
 
+    /// Uncommitted edits are saved with their branch, so switching never loses them.
     private func requestSwitch(to name: String, in ws: SiteWorkspace) {
         guard name != ws.branch else { return }
-        if ws.hasChanges { pendingSwitch = name } else { Task { await model.switchBranch(name) } }
+        Task { await model.switchBranch(name) }
     }
 
     @ToolbarContentBuilder
     private func toolbar(_ ws: SiteWorkspace) -> some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
-            if model.isBusy { ProgressView().controlSize(.small) }
+            SyncStatusButton()
             Menu {
                 Picker("Branch", selection: Binding(get: { ws.branch }, set: { requestSwitch(to: $0, in: ws) })) {
-                    ForEach(model.branches) { b in
-                        Text(b.name == model.defaultBranch ? "\(b.name) (default)" : b.name).tag(b.name)
+                    ForEach(model.branchNames, id: \.self) { name in
+                        let onDevice = model.isOnDevice(name)
+                        Text(name + (name == model.defaultBranch ? " (default)" : "") + (onDevice ? "" : " (not on device)"))
+                            .tag(name)
+                            .selectionDisabled(!onDevice && !model.isOnline)
                     }
                 }
                 .pickerStyle(.inline)
                 Divider()
                 Button("Manage Branches & Pull Requests…") { sheet = .branches }
-                Button("Refresh Branch List") { Task { await model.refresh() } }
             } label: {
                 Label(ws.branch, systemImage: "arrow.triangle.branch").labelStyle(.titleAndIcon)
             }
@@ -85,6 +85,37 @@ struct RootView: View {
             .disabled(!ws.hasChanges)
             .help("Commit all changes to \(ws.branch)")
             Button { sheet = .settings } label: { Label("Settings", systemImage: "gearshape") }
+        }
+    }
+}
+
+/// Shows offline / pending / conflicts / synced; tapping syncs now, or opens the conflicts.
+struct SyncStatusButton: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let (text, icon, color) = describe(model.syncStatus)
+        Button {
+            if case .conflicts = model.syncStatus { model.showConflicts = true } else { Task { await model.sync() } }
+        } label: {
+            if model.syncStatus == .syncing {
+                ProgressView().controlSize(.small)
+            } else {
+                Label(text, systemImage: icon).foregroundStyle(color).labelStyle(.titleAndIcon)
+            }
+        }
+        .disabled(model.syncStatus == .syncing)
+        .help(model.lastSyncError ?? "Sync with GitHub")
+    }
+
+    private func describe(_ s: AppModel.SyncStatus) -> (String, String, Color) {
+        switch s {
+        case .offline: ("Offline", "wifi.slash", .secondary)
+        case .syncing: ("Syncing", "arrow.triangle.2.circlepath", .secondary)
+        case let .conflicts(n): ("\(n) conflict\(n == 1 ? "" : "s")", "exclamationmark.triangle.fill", .orange)
+        case let .pending(n): (n == 0 ? "Not pushed" : "\(n) to push", "arrow.up.circle", .blue)
+        case .failed: ("Sync failed", "exclamationmark.icloud", .red)
+        case .synced: ("Synced", "checkmark.icloud", .secondary)
         }
     }
 }

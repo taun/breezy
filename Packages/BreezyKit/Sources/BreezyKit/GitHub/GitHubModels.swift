@@ -52,7 +52,7 @@ public struct TreeEntry: Hashable, Sendable {
 }
 
 /// A file write (`content`) or deletion (`content == nil`) in one commit.
-public struct FileChange: Hashable, Sendable {
+public struct FileChange: Codable, Hashable, Sendable {
     public var path: String
     public var content: String?
 

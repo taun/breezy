@@ -36,6 +36,22 @@ struct SettingsView: View {
                     Button("Remove token", role: .destructive) { model.signOut() }
                 }
             }
+            if let folder = model.localFolder {
+                Section {
+                    #if os(macOS)
+                    Button("Show Local Files in Finder") { model.revealLocalFiles() }
+                    #endif
+                    Text(folder.path).font(.caption.monospaced()).textSelection(.enabled).foregroundStyle(.secondary)
+                } header: {
+                    Text("Local copy")
+                } footer: {
+                    #if os(iOS)
+                    Text("Also visible in the Files app under On My iPhone/iPad › Breezy. Edit through Breezy; changing files there directly can confuse syncing.")
+                    #else
+                    Text("Every branch you open is kept here so Breezy works offline. Edit through Breezy; changing files directly can confuse syncing.")
+                    #endif
+                }
+            }
         }
         .formStyle(.grouped)
         .navigationTitle("Settings")

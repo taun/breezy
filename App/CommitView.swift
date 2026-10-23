@@ -18,9 +18,13 @@ struct CommitView: View {
                 Section("Message") {
                     TextField("Describe the change", text: $message, axis: .vertical)
                 }
-                if model.isOnDefaultBranch {
-                    Section {
-                        Text("You are committing directly to \(ws.branch), which publishes the site. Create a branch in Branches to review changes in a pull request first.")
+                Section {
+                    if !model.isOnline {
+                        Label("Offline: the commit is saved on this device and pushed to GitHub the next time Breezy is online.", systemImage: "wifi.slash")
+                            .font(.callout).foregroundStyle(.secondary)
+                    }
+                    if model.isOnDefaultBranch {
+                        Text("You are committing to \(ws.branch), which publishes the site when pushed. Create a branch in Branches to review changes in a pull request first.")
                             .font(.callout).foregroundStyle(.secondary)
                     }
                 }
@@ -36,7 +40,7 @@ struct CommitView: View {
                             if !(model.workspace?.hasChanges ?? true) { dismiss() }
                         }
                     }
-                    .disabled(message.trimmingCharacters(in: .whitespaces).isEmpty || model.isBusy)
+                    .disabled(message.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
             .onAppear {

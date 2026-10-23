@@ -8,7 +8,6 @@ struct BranchesView: View {
     @State private var newBranch = ""
     @State private var prTitle = ""
     @State private var prBody = ""
-    @State private var pendingSwitch: String?
     @State private var mergeMethod: MergeMethod = .squash
     @State private var deleteAfterMerge = true
 
@@ -17,31 +16,35 @@ struct BranchesView: View {
             if let ws = model.workspace {
                 Section("Current") {
                     LabeledContent("Branch", value: ws.branch)
-                    LabeledContent("Loaded commit", value: String(ws.headSHA.prefix(7)))
-                    Button("Reload from GitHub") { Task { await model.reload() } }
-                        .disabled(ws.hasChanges)
+                    LabeledContent("Based on commit", value: String(ws.headSHA.prefix(7)))
+                    if let at = ws.state.fetchedAt { LabeledContent("Last synced", value: at.formatted(date: .abbreviated, time: .shortened)) }
+                    if !ws.queue.isEmpty { LabeledContent("Commits waiting to push", value: "\(ws.queue.count)") }
+                    if !ws.state.existsOnRemote { Text("Created on this device; it is created on GitHub at the next sync.").font(.caption).foregroundStyle(.secondary) }
+                    Button("Sync Now") { Task { await model.sync() } }.disabled(!model.isOnline)
                 }
                 Section {
-                    ForEach(model.branches) { b in
+                    ForEach(model.branchNames, id: \.self) { name in
+                        let onDevice = model.isOnDevice(name)
                         Button {
-                            if ws.hasChanges { pendingSwitch = b.name } else { Task { await model.switchBranch(b.name) } }
+                            Task { await model.switchBranch(name) }
                         } label: {
                             HStack {
-                                Text(b.name)
-                                if b.name == model.defaultBranch { Text("default").font(.caption).foregroundStyle(.secondary) }
+                                Text(name)
+                                if name == model.defaultBranch { Text("default").font(.caption).foregroundStyle(.secondary) }
                                 Spacer()
-                                if b.name == ws.branch { Image(systemName: "checkmark") }
+                                Text(onDevice ? "on device" : "GitHub only").font(.caption).foregroundStyle(.secondary)
+                                if name == ws.branch { Image(systemName: "checkmark") }
                             }
                         }
-                        .disabled(b.name == ws.branch)
+                        .disabled(name == ws.branch || (!onDevice && !model.isOnline))
                         .swipeActions {
-                            if b.name != ws.branch && b.name != model.defaultBranch {
-                                Button("Delete", role: .destructive) { Task { await model.deleteBranch(b.name) } }
+                            if name != ws.branch && name != model.defaultBranch {
+                                Button("Delete", role: .destructive) { Task { await model.deleteBranch(name) } }
                             }
                         }
                         .contextMenu {
-                            if b.name != ws.branch && b.name != model.defaultBranch {
-                                Button("Delete Branch", role: .destructive) { Task { await model.deleteBranch(b.name) } }
+                            if name != ws.branch && name != model.defaultBranch {
+                                Button("Delete Branch", role: .destructive) { Task { await model.deleteBranch(name) } }
                             }
                         }
                     }
@@ -55,14 +58,17 @@ struct BranchesView: View {
                             let name = newBranch.trimmingCharacters(in: .whitespaces)
                             Task { await model.createBranch(name); newBranch = "" }
                         }
-                        .disabled(!Self.isValidBranchName(newBranch) || model.branches.contains { $0.name == newBranch })
+                        .disabled(!Self.isValidBranchName(newBranch) || model.branchNames.contains(newBranch) || !ws.queue.isEmpty)
                     }
                 } header: {
                     Text("Branches")
                 } footer: {
-                    Text("A new branch starts at the loaded commit and keeps your uncommitted edits.")
+                    Text(ws.queue.isEmpty
+                         ? "Each branch keeps its own uncommitted edits on this device. A new branch starts at this branch's commit, takes its uncommitted edits, and works offline."
+                         : "Sync the waiting commits before creating a branch.")
                 }
                 Section("Pull requests") {
+                    if !model.isOnline { Text("Pull requests need a connection.").foregroundStyle(.secondary) }
                     if model.pullRequests.isEmpty { Text("No open pull requests.").foregroundStyle(.secondary) }
                     ForEach(model.pullRequests) { pr in PullRequestRow(pr: pr, method: mergeMethod, deleteBranch: deleteAfterMerge) }
                     if !model.pullRequests.isEmpty {
@@ -87,16 +93,7 @@ struct BranchesView: View {
         .navigationTitle("Branches")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
-            ToolbarItem { Button { Task { await model.refresh() } } label: { Label("Refresh", systemImage: "arrow.clockwise") } }
-        }
-        .task { await model.refresh() }
-        .confirmationDialog("Discard uncommitted changes?", isPresented: Binding(get: { pendingSwitch != nil }, set: { if !$0 { pendingSwitch = nil } })) {
-            Button("Discard and switch", role: .destructive) {
-                if let name = pendingSwitch { Task { await model.switchBranch(name) } }
-                pendingSwitch = nil
-            }
-        } message: {
-            Text("Switching branches reloads all nodes. Commit first, or create a new branch to keep the edits.")
+            ToolbarItem { Button { Task { await model.sync() } } label: { Label("Sync", systemImage: "arrow.clockwise") }.disabled(!model.isOnline) }
         }
     }
 

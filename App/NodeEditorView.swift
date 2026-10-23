@@ -54,7 +54,7 @@ struct NodeEditorView: View {
                     if showPreview {
                         MarkdownPreview(node: node)
                     } else {
-                        TextEditor(text: Binding(get: { node.body }, set: { v in workspace.update(slug) { $0.setBody(v) } }))
+                        TextEditor(text: Binding(get: { node.body }, set: { v in edit { $0.setBody(v) } }))
                             .font(.body.monospaced())
                             .frame(minHeight: 280)
                     }
