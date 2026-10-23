@@ -4,9 +4,10 @@ import SwiftUI
 struct RootView: View {
     @Environment(AppModel.self) private var model
     @State private var sheet: Sheet?
+    @Environment(\.openURL) private var openURL
 
     enum Sheet: String, Identifiable {
-        case settings, branches, commit
+        case settings, branches, commit, publish
         var id: String { rawValue }
     }
 
@@ -26,7 +27,9 @@ struct RootView: View {
                 .toolbar { toolbar(ws) }
             } else if model.isBusy {
                 ProgressView("Downloading from GitHub…")
-            } else if model.hasToken && !model.isOnline {
+            } else if !model.hasToken {
+                NavigationStack { SettingsView() }
+            } else if !model.isOnline {
                 ContentUnavailableView("Not on this device yet", systemImage: "wifi.slash",
                                        description: Text("Connect to the internet once to download the site. After that Breezy works offline."))
             } else {
@@ -39,6 +42,7 @@ struct RootView: View {
                 case .settings: SettingsView(close: { sheet = nil })
                 case .branches: BranchesView()
                 case .commit: CommitView()
+                case .publish: PublishView()
                 }
             }
             .frame(minWidth: 460, minHeight: 480)
@@ -84,6 +88,14 @@ struct RootView: View {
             }
             .disabled(!ws.hasChanges)
             .help("Commit all changes to \(ws.branch)")
+            if !model.isOnDefaultBranch {
+                Button { sheet = .publish } label: { Label("Publish", systemImage: "paperplane") }
+                    .help("Merge \(ws.branch) into \(model.defaultBranch) to update the website")
+            }
+            if let url = model.websiteURL {
+                Button { openURL(url) } label: { Label("View Website", systemImage: "safari") }
+                    .help(url.absoluteString)
+            }
             Button { sheet = .settings } label: { Label("Settings", systemImage: "gearshape") }
         }
     }

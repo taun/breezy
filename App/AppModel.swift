@@ -31,6 +31,13 @@ final class AppModel {
     var errorMessage: String?
     var showConflicts = false
 
+    enum DeployStatus: Equatable {
+        case none, waiting, running, live, failed(URL?), unknown
+    }
+    /// The site deploy started by the last publish.
+    private(set) var deployStatus: DeployStatus = .none
+    private var deployWatch: Task<Void, Never>?
+
     private let monitor = NWPathMonitor()
     private var started = false
 
@@ -119,6 +126,13 @@ final class AppModel {
         return workspace != nil
     }
 
+    /// Re-reads the token, which iCloud Keychain may have delivered since launch, and connects if it is new.
+    func refreshToken() async {
+        let had = hasToken
+        hasToken = tokens.load() != nil
+        if hasToken && !had { await sync() }
+    }
+
     func signOut() {
         tokens.delete()
         hasToken = false
@@ -140,6 +154,10 @@ final class AppModel {
                 let branch = repoState.lastBranch.flatMap { repoState.remoteBranches.contains($0) ? $0 : nil } ?? repoState.defaultBranch
                 workspace = try await SiteWorkspace.download(branch, client: client, store: store)
                 repoState.lastBranch = branch
+            }
+            if repoState.websiteURL == nil, let repo {
+                let cname = try await client.fileText("src/CNAME", ref: repoState.defaultBranch)
+                repoState.websiteURL = Publisher.siteURL(repo: repo, cname: cname)
             }
             try store.saveRepoState(repoState)
             if let ws = workspace, case .conflicts = try await ws.sync(client: client) { showConflicts = true }
@@ -282,6 +300,82 @@ final class AppModel {
         isBusy = true
         defer { isBusy = false }
         do { try await op() } catch { handle(error) }
+    }
+
+    // MARK: Publishing
+
+    var websiteURL: URL? { repoState.websiteURL ?? repo.flatMap { Publisher.siteURL(repo: $0, cname: nil) } }
+
+    func setWebsiteURL(_ string: String) {
+        let trimmed = string.trimmingCharacters(in: .whitespaces)
+        repoState.websiteURL = trimmed.isEmpty ? nil : URL(string: trimmed.contains("://") ? trimmed : "https://\(trimmed)")
+        attempt { try store?.saveRepoState(repoState) }
+    }
+
+    /// What publishing the current branch would add to the default branch.
+    func comparison() async -> Comparison? {
+        guard isOnline, let client, !isOnDefaultBranch, workspace?.state.existsOnRemote == true else { return nil }
+        return try? await client.compare(base: defaultBranch, head: currentBranch)
+    }
+
+    /// Pushes anything queued, merges the current branch into the default branch, and watches the site deploy.
+    func publish(method: MergeMethod, deleteBranch: Bool) async -> Bool {
+        guard let ws = workspace, let client, let store, !isOnDefaultBranch else { return false }
+        guard isOnline else { errorMessage = "Publishing needs a connection."; return false }
+        guard !ws.hasChanges else { errorMessage = "Commit your changes first, then publish."; return false }
+        await sync()
+        guard ws.queue.isEmpty, ws.conflicts.isEmpty, ws.state.existsOnRemote else {
+            errorMessage = ws.conflicts.isEmpty ? "Some commits could not be pushed yet. Try again when the sync succeeds." : "Resolve the conflicts first."
+            return false
+        }
+        let branch = ws.branch
+        isBusy = true
+        do {
+            let result = try await Publisher.publish(branch: branch, into: defaultBranch, title: "Publish \(branch)",
+                                                     method: method, deleteBranch: deleteBranch, client: client)
+            isBusy = false
+            watchDeploy(result.mergeCommit)
+            if deleteBranch {
+                repoState.remoteBranches.removeAll { $0 == branch }
+                await switchBranch(defaultBranch)
+                try? store.removeBranch(branch)
+                try? store.saveRepoState(repoState)
+            } else {
+                await sync()
+            }
+            return true
+        } catch {
+            isBusy = false
+            handle(error)
+            return false
+        }
+    }
+
+    /// Polls the GitHub Actions run for the merge commit until the deploy finishes (up to 15 minutes).
+    private func watchDeploy(_ sha: String) {
+        deployWatch?.cancel()
+        deployStatus = .waiting
+        guard let client else { return }
+        deployWatch = Task { [weak self] in
+            for _ in 0..<90 {
+                do {
+                    if let run = try await client.workflowRun(forCommit: sha) {
+                        if run.isFinished {
+                            self?.deployStatus = run.succeeded ? .live : .failed(run.htmlURL)
+                            return
+                        }
+                        self?.deployStatus = .running
+                    }
+                } catch {
+                    // Most likely the token lacks "Actions: read"; the site still deploys, we just cannot watch it.
+                    self?.deployStatus = .unknown
+                    return
+                }
+                try? await Task.sleep(for: .seconds(10))
+                if Task.isCancelled { return }
+            }
+            self?.deployStatus = .unknown
+        }
     }
 
     // MARK: Local files

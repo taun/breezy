@@ -68,3 +68,54 @@ import Testing
         #expect(RepoRef("nope") == nil)
     }
 }
+
+@Suite struct PublishTests {
+    let repo = RepoRef(owner: "o", name: "r")
+
+    @Test func publishOpensWaitsForMergeabilityMergesAndDeletes() async throws {
+        let m = MockTransport()
+        m.on("GET /pulls?state=open&per_page=100", [])
+        m.on("POST /pulls", status: 201, ["number": 5, "title": "T", "state": "open", "head": ["ref": "edit"], "base": ["ref": "main"]])
+        var polls = 0
+        m.on("GET /pulls/5") { _ in
+            polls += 1
+            return (200, ["number": 5, "title": "T", "state": "open", "head": ["ref": "edit"], "base": ["ref": "main"],
+                          "mergeable": polls >= 2 ? true as Any : NSNull()])
+        }
+        m.on("PUT /pulls/5/merge", ["merged": true, "sha": "m9"])
+        m.on("DELETE /git/refs/heads/edit", status: 204, [:])
+        let r = try await Publisher.publish(branch: "edit", into: "main", title: "T", method: .squash, deleteBranch: true,
+                                            client: GitHubClient(repo: repo, token: "t", transport: m), pollDelay: .zero)
+        #expect(r == Publisher.Result(pullRequest: 5, mergeCommit: "m9"))
+        #expect(m.count("GET /pulls/5") == 2)
+        #expect(m.count("DELETE /git/refs/heads/edit") == 1)
+    }
+
+    @Test func publishReusesOpenPullRequestAndStopsOnConflicts() async throws {
+        let m = MockTransport()
+        m.on("GET /pulls?state=open&per_page=100", [["number": 3, "title": "T", "state": "open", "head": ["ref": "edit"], "base": ["ref": "main"], "mergeable": false]])
+        await #expect(throws: GitHubError.self) {
+            _ = try await Publisher.publish(branch: "edit", into: "main", title: "T", method: .merge, deleteBranch: true,
+                                            client: GitHubClient(repo: repo, token: "t", transport: m), pollDelay: .zero)
+        }
+        #expect(m.count("POST /pulls") == 0 && m.count("PUT /pulls/3/merge") == 0)
+    }
+
+    @Test func compareWorkflowAndFiles() async throws {
+        let m = MockTransport()
+        m.on("GET /compare/main...feature/x", ["ahead_by": 2, "behind_by": 0, "files": [["filename": "src/nodes/a.md"]]])
+        m.on("GET /actions/runs?head_sha=m9&per_page=1", ["workflow_runs": [["name": "Deploy", "status": "completed", "conclusion": "success"]]])
+        m.on("GET /contents/src/CNAME?ref=main", ["content": Data("www.taun.org\n".utf8).base64EncodedString()])
+        let c = GitHubClient(repo: repo, token: "t", transport: m)
+        #expect(try await c.compare(base: "main", head: "feature/x") == Comparison(aheadBy: 2, behindBy: 0, files: ["src/nodes/a.md"]))
+        #expect(try await c.workflowRun(forCommit: "m9")?.succeeded == true)
+        #expect(try await c.fileText("src/CNAME", ref: "main") == "www.taun.org\n")
+        #expect(try await c.fileText("missing", ref: "main") == nil)
+    }
+
+    @Test func siteURLs() {
+        #expect(Publisher.siteURL(repo: RepoRef(owner: "taun", name: "taun.github.io"), cname: "www.taun.org\n")?.absoluteString == "https://www.taun.org/")
+        #expect(Publisher.siteURL(repo: RepoRef(owner: "Taun", name: "taun.github.io"), cname: nil)?.absoluteString == "https://taun.github.io/")
+        #expect(Publisher.siteURL(repo: RepoRef(owner: "taun", name: "blog"), cname: nil)?.absoluteString == "https://taun.github.io/blog/")
+    }
+}

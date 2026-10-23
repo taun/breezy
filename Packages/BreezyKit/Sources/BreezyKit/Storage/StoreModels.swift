@@ -6,6 +6,8 @@ public struct RepoState: Codable, Equatable, Sendable {
     /// Branch names last seen on GitHub.
     public var remoteBranches: [String]
     public var lastBranch: String?
+    /// The published site's address (from CNAME, or github.io); editable in Settings.
+    public var websiteURL: URL?
 
     public init(defaultBranch: String = "main", remoteBranches: [String] = [], lastBranch: String? = nil) {
         self.defaultBranch = defaultBranch

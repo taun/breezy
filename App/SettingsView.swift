@@ -6,6 +6,7 @@ struct SettingsView: View {
     var close: (() -> Void)?
     @State private var repo = ""
     @State private var token = ""
+    @State private var website = ""
 
     var body: some View {
         Form {
@@ -22,10 +23,26 @@ struct SettingsView: View {
             }
             Section {
                 SecureField(model.hasToken ? "Saved in the Keychain (enter to replace)" : "github_pat_…", text: $token)
+                if !model.hasToken {
+                    Button("Check iCloud Keychain Again") { Task { await model.refreshToken() } }
+                }
             } header: {
                 Text("Personal access token")
             } footer: {
-                Text("Create a fine-grained token for this repository with **Contents** and **Pull requests** set to read and write. It is stored only in this device's Keychain.")
+                Text("Create a fine-grained token for this repository with **Contents** and **Pull requests** set to read and write, and optionally **Actions** read to show when the website has rebuilt. It is kept in iCloud Keychain, so your other devices signed in to the same Apple ID get it automatically.")
+            }
+            Section {
+                TextField("https://www.example.org/", text: $website)
+                    .autocorrectionDisabled()
+                    #if os(iOS)
+                    .textInputAutocapitalization(.never)
+                    .keyboardType(.URL)
+                    #endif
+                    .onSubmit { model.setWebsiteURL(website) }
+            } header: {
+                Text("Website")
+            } footer: {
+                Text("Opened by View Website. Filled in from the site's CNAME file.")
             }
             Section {
                 Button("Save and connect") {
@@ -33,7 +50,7 @@ struct SettingsView: View {
                 }
                 .disabled(repo.isEmpty || (!model.hasToken && token.isEmpty) || model.isBusy)
                 if model.hasToken {
-                    Button("Remove token", role: .destructive) { model.signOut() }
+                    Button("Remove Token from All Devices", role: .destructive) { model.signOut() }
                 }
             }
             if let folder = model.localFolder {
@@ -60,6 +77,10 @@ struct SettingsView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Close") { close() } }
             }
         }
-        .onAppear { repo = model.repoString }
+        .onAppear {
+            repo = model.repoString
+            website = model.websiteURL?.absoluteString ?? ""
+        }
+        .onDisappear { if website != (model.websiteURL?.absoluteString ?? "") { model.setWebsiteURL(website) } }
     }
 }

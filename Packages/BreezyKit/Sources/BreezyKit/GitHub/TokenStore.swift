@@ -8,6 +8,9 @@ public protocol TokenStore: Sendable {
     func delete()
 }
 
+/// The token in the Keychain, synced through iCloud Keychain so every device signed in to the same Apple ID
+/// (with iCloud Keychain on) gets it after it is entered once. Needs builds signed with the same team, since the
+/// item lives in the app's default access group (TeamID.bundle-id).
 public struct KeychainTokenStore: TokenStore {
     let service: String
     let account: String
@@ -17,11 +20,49 @@ public struct KeychainTokenStore: TokenStore {
         self.account = account
     }
 
-    private var query: [String: Any] {
+    private var base: [String: Any] {
         [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
     }
 
+    /// The synced item. On macOS it must be in the data protection keychain (the iOS-style one) to sync.
+    private var synced: [String: Any] {
+        var q = base
+        q[kSecAttrSynchronizable as String] = true
+        q[kSecUseDataProtectionKeychain as String] = true
+        return q
+    }
+
+    /// The device-only item earlier versions saved (on macOS, in the legacy file keychain).
+    private var legacy: [String: Any] {
+        var q = base
+        q[kSecAttrSynchronizable as String] = false
+        return q
+    }
+
     public func load() -> String? {
+        if let token = read(synced) { return token }
+        // Move a token saved by an earlier version into the synced item, so other devices receive it.
+        guard let old = read(legacy) else { return nil }
+        if (try? save(old)) != nil { SecItemDelete(legacy as CFDictionary) }
+        return old
+    }
+
+    public func save(_ token: String) throws {
+        SecItemDelete(synced as CFDictionary)
+        var q = synced
+        q[kSecValueData as String] = Data(token.utf8)
+        q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock // the only class iCloud Keychain syncs
+        let status = SecItemAdd(q as CFDictionary, nil)
+        guard status == errSecSuccess else { throw KeychainError(status: status) }
+    }
+
+    /// Removes the token here and, through iCloud Keychain, on the other devices.
+    public func delete() {
+        SecItemDelete(synced as CFDictionary)
+        SecItemDelete(legacy as CFDictionary)
+    }
+
+    private func read(_ query: [String: Any]) -> String? {
         var q = query
         q[kSecReturnData as String] = true
         q[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -29,17 +70,17 @@ public struct KeychainTokenStore: TokenStore {
         guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let data = out as? Data else { return nil }
         return String(data: data, encoding: .utf8)
     }
+}
 
-    public func save(_ token: String) throws {
-        delete()
-        var q = query
-        q[kSecValueData as String] = Data(token.utf8)
-        q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        let status = SecItemAdd(q as CFDictionary, nil)
-        guard status == errSecSuccess else { throw NSError(domain: NSOSStatusErrorDomain, code: Int(status)) }
+public struct KeychainError: Error, LocalizedError {
+    public let status: OSStatus
+    public var errorDescription: String? {
+        let detail = SecCopyErrorMessageString(status, nil) as String? ?? "status \(status)"
+        if status == errSecMissingEntitlement {
+            return "\(detail). Sign the app with your development team in Xcode so the Keychain can sync the token."
+        }
+        return detail
     }
-
-    public func delete() { SecItemDelete(query as CFDictionary) }
 }
 
 public final class MemoryTokenStore: TokenStore, @unchecked Sendable {

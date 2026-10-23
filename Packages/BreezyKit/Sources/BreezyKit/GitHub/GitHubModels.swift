@@ -67,6 +67,24 @@ public enum MergeMethod: String, CaseIterable, Sendable, Identifiable {
     public var id: String { rawValue }
 }
 
+public struct Comparison: Hashable, Sendable {
+    public var aheadBy: Int
+    public var behindBy: Int
+    public var files: [String]
+}
+
+public struct WorkflowRun: Hashable, Sendable {
+    public var name: String
+    /// queued, in_progress, completed...
+    public var status: String
+    /// success, failure, cancelled... once completed.
+    public var conclusion: String?
+    public var htmlURL: URL?
+
+    public var isFinished: Bool { status == "completed" }
+    public var succeeded: Bool { conclusion == "success" }
+}
+
 public struct PullRequest: Hashable, Sendable, Identifiable {
     public var number: Int
     public var title: String

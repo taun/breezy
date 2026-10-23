@@ -15,7 +15,8 @@ A macOS / iOS / iPadOS app (SwiftUI, multiplatform) for editing the content of t
 - **Offline commits** queue on the device and are pushed in order as separate GitHub commits.
 - **Conflicts** (a file changed both locally and on GitHub since the last sync) are resolved file by file: keep mine, use GitHub's, or edit a merged version. Nothing is pushed while any are open.
 - **Merging:** open a pull request and merge it through the API (merge / squash / rebase choice). GitHub reports conflicts; Breezy does not resolve file conflicts in v1.
-- **Auth:** a fine-grained personal access token (contents + pull requests, this repo only), stored in the Keychain.
+- **Auth:** a fine-grained personal access token (contents + pull requests read/write, optionally actions read; this repo only), stored as a synchronizable Keychain item so iCloud Keychain delivers it to the user's other devices. On macOS that requires the data protection keychain; both platforms must be signed with the same team. Tokens saved by older builds (device-only) are migrated on first read.
+- **Publishing:** merge the current branch into the default branch via a pull request (`Publisher`), then watch the GitHub Actions deploy and offer View Website (opens the default browser; URL from `src/CNAME`, editable in Settings).
 - **Preview:** native Markdown rendering in the app. No web view of the deployed site.
 - **Assets:** v1 only references existing files in `src/assets/` (choose a path); no uploads.
 - **v1 scope:** node list and search; node editor with validation; link and relation editor; branches and pull requests.

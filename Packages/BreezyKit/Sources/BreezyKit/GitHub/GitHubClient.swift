@@ -105,13 +105,47 @@ public struct GitHubClient: Sendable {
         Self.pullRequest(try await object("POST", "/pulls", body: ["title": title, "head": head, "base": base, "body": body]))
     }
 
-    /// Merges through GitHub; conflicts and failed checks come back as `GitHubError.mergeFailed`.
-    public func merge(_ number: Int, method: MergeMethod) async throws {
+    /// Merges through GitHub and returns the merge commit; conflicts and failed checks come back as `GitHubError.mergeFailed`.
+    @discardableResult
+    public func merge(_ number: Int, method: MergeMethod) async throws -> String {
         do {
             let json = try await object("PUT", "/pulls/\(number)/merge", body: ["merge_method": method.rawValue])
-            if (json["merged"] as? Bool) != true { throw GitHubError.mergeFailed((json["message"] as? String) ?? "not merged") }
+            guard (json["merged"] as? Bool) == true, let sha = json["sha"] as? String else {
+                throw GitHubError.mergeFailed((json["message"] as? String) ?? "not merged")
+            }
+            return sha
         } catch let GitHubError.http(status, message) where status == 405 || status == 409 {
             throw GitHubError.mergeFailed(message)
+        }
+    }
+
+    /// What `head` has that `base` does not: commit count and changed file paths.
+    public func compare(base: String, head: String) async throws -> Comparison {
+        let json = try await object("GET", "/compare/\(Self.escapeRef(base))...\(Self.escapeRef(head))")
+        let files = ((json["files"] as? [[String: Any]]) ?? []).compactMap { $0["filename"] as? String }
+        return Comparison(aheadBy: json["ahead_by"] as? Int ?? 0, behindBy: json["behind_by"] as? Int ?? 0, files: files)
+    }
+
+    /// The most recent GitHub Actions run for a commit (the site deploy), or nil if none has started.
+    /// Needs the token's "Actions: read" permission; callers treat a 403 as "status unknown".
+    public func workflowRun(forCommit sha: String) async throws -> WorkflowRun? {
+        let json = try await object("GET", "/actions/runs?head_sha=\(sha)&per_page=1")
+        guard let run = (json["workflow_runs"] as? [[String: Any]])?.first else { return nil }
+        return WorkflowRun(
+            name: run["name"] as? String ?? "",
+            status: run["status"] as? String ?? "",
+            conclusion: run["conclusion"] as? String,
+            htmlURL: (run["html_url"] as? String).flatMap(URL.init(string:)))
+    }
+
+    /// A text file at a ref, or nil if it does not exist.
+    public func fileText(_ path: String, ref: String) async throws -> String? {
+        do {
+            let json = try await object("GET", "/contents/\(path)?ref=\(Self.escapeRef(ref))")
+            guard let b64 = json["content"] as? String, let data = Data(base64Encoded: b64, options: .ignoreUnknownCharacters) else { return nil }
+            return String(data: data, encoding: .utf8)
+        } catch GitHubError.http(404, _) {
+            return nil
         }
     }
 
