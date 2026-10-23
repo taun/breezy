@@ -8,6 +8,7 @@ struct CommitTextField: View {
     let commit: (String) -> Void
     @State private var text = ""
     @FocusState private var focused: Bool
+    @Environment(\.scenePhase) private var scenePhase
 
     init(_ title: String, value: String, commit: @escaping (String) -> Void) {
         self.title = title
@@ -24,6 +25,8 @@ struct CommitTextField: View {
             #endif
             .onSubmit { commit(text) }
             .onChange(of: focused) { _, now in if !now { commit(text) } }
+            // Leaving the app mid-typing keeps what was typed (it is saved to disk like any other edit).
+            .onChange(of: scenePhase) { _, phase in if phase != .active && focused && text != value { commit(text) } }
             .onAppear { text = value }
             .onChange(of: value) { _, new in if !focused { text = new } }
     }

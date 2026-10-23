@@ -23,7 +23,12 @@ struct SettingsView: View {
             }
             Section {
                 SecureField(model.hasToken ? "Saved in the Keychain (enter to replace)" : "github_pat_…", text: $token)
-                if !model.hasToken {
+                switch model.tokenSync {
+                case .synced:
+                    Label("In iCloud Keychain: your other devices get it too.", systemImage: "checkmark.icloud").foregroundStyle(.secondary)
+                case let .deviceOnly(reason):
+                    Label("Saved on this device only, not syncing: \(reason)", systemImage: "exclamationmark.icloud").foregroundStyle(.orange)
+                case .missing:
                     Button("Check iCloud Keychain Again") { Task { await model.refreshToken() } }
                 }
             } header: {

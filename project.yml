@@ -11,7 +11,9 @@ targets:
   Breezy:
     type: application
     supportedDestinations: [iOS, macOS]
-    sources: [App]
+    sources:
+      - path: App
+        excludes: ["*.entitlements"]
     dependencies:
       - package: BreezyKit
     settings:
@@ -30,7 +32,11 @@ targets:
         INFOPLIST_KEY_UIFileSharingEnabled: YES
         INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
         TARGETED_DEVICE_FAMILY: "1,2"
-        ENABLE_APP_SANDBOX: YES
-        ENABLE_OUTGOING_NETWORK_CONNECTIONS: YES
         CODE_SIGN_STYLE: Automatic
+        # Kept here because `xcodegen generate` rewrites the project; the same team on both platforms
+        # is what lets them share the iCloud Keychain token.
+        DEVELOPMENT_TEAM: 6569EWWSLR
+        CODE_SIGN_ENTITLEMENTS[sdk=macosx*]: App/Breezy-macOS.entitlements
+        CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*]: App/Breezy-iOS.entitlements
+        CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]: App/Breezy-iOS.entitlements
         ENABLE_PREVIEWS: YES

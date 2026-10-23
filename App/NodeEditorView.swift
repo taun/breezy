@@ -5,12 +5,19 @@ struct NodeEditorView: View {
     @Environment(AppModel.self) private var model
     let workspace: SiteWorkspace
     let slug: String
-    @State private var showPreview = false
+    @Environment(\.scenePhase) private var scenePhase
+    // Restored with the window: preview mode, and which field of which node was being edited ("slug|field").
+    @SceneStorage("editor.preview") private var showPreview = false
+    @SceneStorage("editor.focus") private var focusRaw = ""
+    @FocusState private var focus: Field?
+
+    enum Field: String { case title, summary, body }
 
     private var node: NodeFile? { workspace.nodes[slug] }
 
     var body: some View {
         if let node {
+            ScrollViewReader { proxy in
             Form {
                 let issues = workspace.issues(for: slug)
                 if !issues.isEmpty {
@@ -23,8 +30,10 @@ struct NodeEditorView: View {
                 }
                 Section("Basics") {
                     TextField("Title", text: bind(\.title) { try $0.setTitle($1) })
+                        .focused($focus, equals: .title).id(Field.title)
                     TypeField(type: bind(\.type) { try $0.setType($1) }, known: workspace.types)
                     TextField("Summary", text: bind(\.summary) { try $0.setSummary($1) }, axis: .vertical)
+                        .focused($focus, equals: .summary).id(Field.summary)
                     CommitTextField("Tags, comma separated", value: node.tags.joined(separator: ", ")) { text in
                         edit { try $0.setTags(text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }) }
                     }
@@ -54,15 +63,31 @@ struct NodeEditorView: View {
                     if showPreview {
                         MarkdownPreview(node: node)
                     } else {
-                        TextEditor(text: Binding(get: { node.body }, set: { v in edit { $0.setBody(v) } }))
+                        BodyEditor(text: Binding(get: { node.body }, set: { v in edit { $0.setBody(v) } }), slug: slug)
+                            .focused($focus, equals: .body)
                             .font(.body.monospaced())
                             .frame(minHeight: 280)
+                            .id(Field.body)
                     }
                 } header: {
                     Text("Body")
                 }
             }
             .formStyle(.grouped)
+            .onChange(of: focus) { _, f in
+                // Leaving the app also clears focus; only record changes made while in use.
+                if scenePhase == .active { focusRaw = f.map { "\(slug)|\($0.rawValue)" } ?? "" }
+            }
+            .task {
+                // Put the cursor back where it was, and scroll to it.
+                let parts = focusRaw.split(separator: "|")
+                guard parts.count == 2, parts[0] == slug, let f = Field(rawValue: String(parts[1])) else { return }
+                if f == .body && showPreview { return }
+                try? await Task.sleep(for: .milliseconds(150))
+                proxy.scrollTo(f, anchor: .center)
+                focus = f
+            }
+            }
             .navigationTitle(node.title)
             .toolbar {
                 if workspace.isModified(slug) {

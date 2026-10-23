@@ -3,7 +3,36 @@ import SwiftUI
 
 struct RootView: View {
     @Environment(AppModel.self) private var model
-    @State private var sheet: Sheet?
+    // Window state, restored by the system with the window (SceneStorage), so a relaunch looks unchanged.
+    @SceneStorage("root.sheet") private var sheetRaw = ""
+    /// Last selected node per branch, as JSON [branch: slug].
+    @SceneStorage("root.selectionByBranch") private var selectionJSON = "{}"
+    @SceneStorage("root.columns") private var columnsRaw = "automatic"
+
+    private var sheet: Binding<Sheet?> {
+        Binding(get: { Sheet(rawValue: sheetRaw) }, set: { sheetRaw = $0?.rawValue ?? "" })
+    }
+
+    /// The selected node of the current branch; switching branches brings back that branch's selection.
+    private var selection: Binding<String?> {
+        Binding(
+            get: { Self.decode(selectionJSON)[model.currentBranch] },
+            set: { slug in
+                var map = Self.decode(selectionJSON)
+                map[model.currentBranch] = slug
+                selectionJSON = (try? String(data: JSONEncoder().encode(map), encoding: .utf8)) ?? "{}"
+            })
+    }
+
+    private static func decode(_ json: String) -> [String: String] {
+        (try? JSONDecoder().decode([String: String].self, from: Data(json.utf8))) ?? [:]
+    }
+
+    private var columns: Binding<NavigationSplitViewVisibility> {
+        Binding(
+            get: { ["all": .all, "doubleColumn": .doubleColumn, "detailOnly": .detailOnly][columnsRaw] ?? .automatic },
+            set: { v in columnsRaw = v == .all ? "all" : v == .doubleColumn ? "doubleColumn" : v == .detailOnly ? "detailOnly" : "automatic" })
+    }
     @Environment(\.openURL) private var openURL
 
     enum Sheet: String, Identifiable {
@@ -15,10 +44,10 @@ struct RootView: View {
         @Bindable var model = model
         Group {
             if let ws = model.workspace {
-                NavigationSplitView {
-                    NodeListView(workspace: ws)
+                NavigationSplitView(columnVisibility: columns) {
+                    NodeListView(workspace: ws, selection: selection)
                 } detail: {
-                    if let slug = model.selection, ws.nodes[slug] != nil {
+                    if let slug = selection.wrappedValue, ws.nodes[slug] != nil {
                         NodeEditorView(workspace: ws, slug: slug).id(slug)
                     } else {
                         ContentUnavailableView("No node selected", systemImage: "doc.text", description: Text("Choose a node, or add one with +."))
@@ -36,10 +65,10 @@ struct RootView: View {
                 NavigationStack { SettingsView() }
             }
         }
-        .sheet(item: $sheet) { s in
+        .sheet(item: sheet) { s in
             NavigationStack {
                 switch s {
-                case .settings: SettingsView(close: { sheet = nil })
+                case .settings: SettingsView(close: { sheetRaw = "" })
                 case .branches: BranchesView()
                 case .commit: CommitView()
                 case .publish: PublishView()
@@ -78,25 +107,25 @@ struct RootView: View {
                 }
                 .pickerStyle(.inline)
                 Divider()
-                Button("Manage Branches & Pull Requests…") { sheet = .branches }
+                Button("Manage Branches & Pull Requests…") { sheetRaw = Sheet.branches.rawValue }
             } label: {
                 Label(ws.branch, systemImage: "arrow.triangle.branch").labelStyle(.titleAndIcon)
             }
             .help("Switch branch, or manage branches and pull requests")
-            Button { sheet = .commit } label: {
+            Button { sheetRaw = Sheet.commit.rawValue } label: {
                 Label("Commit (\(ws.changes.count))", systemImage: "checkmark.circle")
             }
             .disabled(!ws.hasChanges)
             .help("Commit all changes to \(ws.branch)")
             if !model.isOnDefaultBranch {
-                Button { sheet = .publish } label: { Label("Publish", systemImage: "paperplane") }
+                Button { sheetRaw = Sheet.publish.rawValue } label: { Label("Publish", systemImage: "paperplane") }
                     .help("Merge \(ws.branch) into \(model.defaultBranch) to update the website")
             }
             if let url = model.websiteURL {
                 Button { openURL(url) } label: { Label("View Website", systemImage: "safari") }
                     .help(url.absoluteString)
             }
-            Button { sheet = .settings } label: { Label("Settings", systemImage: "gearshape") }
+            Button { sheetRaw = Sheet.settings.rawValue } label: { Label("Settings", systemImage: "gearshape") }
         }
     }
 }

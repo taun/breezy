@@ -14,6 +14,8 @@ final class AppModel {
 
     var repoString: String = UserDefaults.standard.string(forKey: AppModel.repoKey) ?? "taun/taun.github.io"
     private(set) var hasToken: Bool
+    /// Whether the token is in iCloud Keychain, only on this device (and why), or missing.
+    private(set) var tokenSync: KeychainTokenStore.Status = .missing
     private let tokens: TokenStore
 
     private(set) var store: LocalStore?
@@ -27,7 +29,6 @@ final class AppModel {
     /// The last sync failure that was not simply "offline".
     private(set) var lastSyncError: String?
 
-    var selection: String?
     var errorMessage: String?
     var showConflicts = false
 
@@ -44,6 +45,7 @@ final class AppModel {
     init(tokens: TokenStore = KeychainTokenStore()) {
         self.tokens = tokens
         hasToken = tokens.load() != nil
+        updateTokenSync()
     }
 
     var repo: RepoRef? { RepoRef(repoString) }
@@ -112,7 +114,6 @@ final class AppModel {
             repoString = newRepo
             UserDefaults.standard.set(newRepo, forKey: Self.repoKey)
             workspace = nil
-            selection = nil
             openLocal()
         }
         if !token.isEmpty {
@@ -121,6 +122,7 @@ final class AppModel {
                 return false
             }
             hasToken = true
+            updateTokenSync()
         }
         await sync()
         return workspace != nil
@@ -130,11 +132,17 @@ final class AppModel {
     func refreshToken() async {
         let had = hasToken
         hasToken = tokens.load() != nil
+        updateTokenSync()
         if hasToken && !had { await sync() }
+    }
+
+    private func updateTokenSync() {
+        tokenSync = (tokens as? KeychainTokenStore)?.status() ?? (hasToken ? .synced : .missing)
     }
 
     func signOut() {
         tokens.delete()
+        tokenSync = .missing
         hasToken = false
     }
 
@@ -201,7 +209,6 @@ final class AppModel {
                 defer { isBusy = false }
                 workspace = try await SiteWorkspace.download(name, client: client, store: store)
             }
-            if let s = selection, workspace?.nodes[s] == nil { selection = nil }
             repoState.lastBranch = name
             try store.saveRepoState(repoState)
         } catch {

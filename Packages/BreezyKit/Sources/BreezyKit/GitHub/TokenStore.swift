@@ -39,12 +39,29 @@ public struct KeychainTokenStore: TokenStore {
         return q
     }
 
+    public enum Status: Equatable, Sendable {
+        case synced
+        /// Saved, but only on this device; the reason sync is not possible (usually signing / entitlements).
+        case deviceOnly(String)
+        case missing
+    }
+
+    /// Where the token is, moving a device-only token from an earlier version into iCloud Keychain when possible.
+    public func status() -> Status {
+        if read(synced) != nil { return .synced }
+        guard let old = read(legacy) else { return .missing }
+        do {
+            try save(old)
+            SecItemDelete(legacy as CFDictionary)
+            return .synced
+        } catch {
+            return .deviceOnly(error.localizedDescription)
+        }
+    }
+
     public func load() -> String? {
-        if let token = read(synced) { return token }
-        // Move a token saved by an earlier version into the synced item, so other devices receive it.
-        guard let old = read(legacy) else { return nil }
-        if (try? save(old)) != nil { SecItemDelete(legacy as CFDictionary) }
-        return old
+        _ = status() // migrate if needed
+        return read(synced) ?? read(legacy)
     }
 
     public func save(_ token: String) throws {

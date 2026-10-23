@@ -4,9 +4,13 @@ import SwiftUI
 struct NodeListView: View {
     @Environment(AppModel.self) private var model
     let workspace: SiteWorkspace
-    @State private var search = ""
-    @State private var typeFilter: String?
-    @State private var showNew = false
+    @Binding var selection: String?
+    @SceneStorage("list.search") private var search = ""
+    /// "" means all types.
+    @SceneStorage("list.type") private var typeRaw = ""
+    @SceneStorage("list.showNew") private var showNew = false
+
+    private var typeFilter: String? { typeRaw.isEmpty ? nil : typeRaw }
 
     private var visible: [NodeFile] {
         let q = search.trimmingCharacters(in: .whitespaces).lowercased()
@@ -17,8 +21,7 @@ struct NodeListView: View {
     }
 
     var body: some View {
-        @Bindable var model = model
-        List(selection: $model.selection) {
+        List(selection: $selection) {
             ForEach(visible, id: \.slug) { node in
                 NodeRow(node: node, modified: workspace.isModified(node.slug), hasIssues: !workspace.issues(for: node.slug).isEmpty)
                     .tag(node.slug)
@@ -34,7 +37,7 @@ struct NodeListView: View {
         .toolbar {
             ToolbarItem {
                 Menu {
-                    Picker("Type", selection: $typeFilter) {
+                    Picker("Type", selection: Binding(get: { typeFilter }, set: { typeRaw = $0 ?? "" })) {
                         Text("All types").tag(String?.none)
                         ForEach(workspace.types, id: \.self) { Text($0).tag(String?.some($0)) }
                     }
@@ -45,13 +48,13 @@ struct NodeListView: View {
             ToolbarItem { Button { showNew = true } label: { Label("New Node", systemImage: "plus") } }
         }
         .sheet(isPresented: $showNew) {
-            NavigationStack { NewNodeView(workspace: workspace) }.frame(minWidth: 420, minHeight: 320)
+            NavigationStack { NewNodeView(workspace: workspace, selection: $selection) }.frame(minWidth: 420, minHeight: 320)
         }
         .refreshable { await model.sync() }
     }
 
     private func delete(_ slug: String) {
-        if model.selection == slug { model.selection = nil }
+        if selection == slug { selection = nil }
         do { try workspace.deleteNode(slug) } catch { model.errorMessage = error.localizedDescription }
     }
 }
@@ -82,9 +85,11 @@ struct NewNodeView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let workspace: SiteWorkspace
-    @State private var slug = ""
-    @State private var title = ""
-    @State private var type = "post"
+    @Binding var selection: String?
+    // Draft kept with the window, so a half-filled form survives a relaunch.
+    @SceneStorage("new.slug") private var slug = ""
+    @SceneStorage("new.title") private var title = ""
+    @SceneStorage("new.type") private var type = "post"
 
     private var slugIssues: [ValidationIssue] { slug.isEmpty ? [] : Validator.validateSlug(slug, existing: workspace.slugs) }
 
@@ -106,12 +111,13 @@ struct NewNodeView: View {
         .formStyle(.grouped)
         .navigationTitle("New Node")
         .toolbar {
-            ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+            ToolbarItem(placement: .cancellationAction) { Button("Cancel") { slug = ""; title = ""; dismiss() } }
             ToolbarItem(placement: .confirmationAction) {
                 Button("Create") {
                     do {
                         try workspace.createNode(slug: slug, title: title, type: type)
-                        model.selection = slug
+                        selection = slug
+                        slug = ""; title = ""; type = "post"
                         dismiss()
                     } catch { model.errorMessage = error.localizedDescription }
                 }

@@ -7,8 +7,9 @@ struct PublishView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @State private var comparison: Comparison?
-    @State private var method: MergeMethod = .squash
-    @State private var deleteBranch = true
+    @SceneStorage("publish.method") private var methodRaw = MergeMethod.squash.rawValue
+    @SceneStorage("publish.deleteBranch") private var deleteBranch = true
+    private var method: MergeMethod { MergeMethod(rawValue: methodRaw) ?? .squash }
     @State private var confirming = false
     @State private var published = false
 
@@ -37,7 +38,7 @@ struct PublishView: View {
                     if !model.isOnline { Label("Publishing needs a connection.", systemImage: "wifi.slash").foregroundStyle(.secondary) }
                     if ws.hasChanges { Label("Commit your changes first.", systemImage: "exclamationmark.circle").foregroundStyle(.orange) }
                     if !ws.conflicts.isEmpty { Label("Resolve the conflicts first.", systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
-                    Picker("Merge as", selection: $method) {
+                    Picker("Merge as", selection: Binding(get: { method }, set: { methodRaw = $0.rawValue })) {
                         Text("One commit (squash)").tag(MergeMethod.squash)
                         Text("Merge commit").tag(MergeMethod.merge)
                         Text("Rebase").tag(MergeMethod.rebase)

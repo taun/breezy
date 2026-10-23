@@ -4,7 +4,7 @@ import SwiftUI
 struct CommitView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
-    @State private var message = ""
+    @SceneStorage("commit.message") private var message = ""
 
     var body: some View {
         if let ws = model.workspace {
@@ -37,7 +37,7 @@ struct CommitView: View {
                     Button("Commit") {
                         Task {
                             await model.commit(message: message)
-                            if !(model.workspace?.hasChanges ?? true) { dismiss() }
+                            if !(model.workspace?.hasChanges ?? true) { message = ""; dismiss() }
                         }
                     }
                     .disabled(message.trimmingCharacters(in: .whitespaces).isEmpty)

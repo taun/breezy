@@ -5,7 +5,11 @@ import SwiftUI
 struct ConflictsView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
-    @State private var editing: Conflict?
+    @SceneStorage("conflicts.editing") private var editingPath = ""
+
+    private var editing: Binding<Conflict?> {
+        Binding(get: { model.workspace?.conflicts.first { $0.path == editingPath } }, set: { editingPath = $0?.path ?? "" })
+    }
 
     var body: some View {
         if let ws = model.workspace {
@@ -21,7 +25,7 @@ struct ConflictsView: View {
                         HStack {
                             Button("Keep Mine") { Task { await model.resolve(c.path, with: .mine) } }
                             Button("Use GitHub’s") { Task { await model.resolve(c.path, with: .theirs) } }
-                            Button("Edit…") { editing = c }
+                            Button("Edit…") { editingPath = c.path }
                         }
                         .buttonStyle(.bordered)
                     }
@@ -30,7 +34,7 @@ struct ConflictsView: View {
             }
             .navigationTitle("Conflicts")
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Later") { dismiss() } } }
-            .sheet(item: $editing) { c in
+            .sheet(item: editing) { c in
                 NavigationStack { MergeEditor(conflict: c, mine: ws.localText(path: c.path) ?? "", theirs: ws.text(sha: c.remoteSHA) ?? "") }
                     .frame(minWidth: 640, minHeight: 560)
             }
@@ -51,7 +55,9 @@ struct MergeEditor: View {
     let conflict: Conflict
     let mine: String
     let theirs: String
-    @State private var text = ""
+    // The draft and the file it belongs to, kept with the window.
+    @SceneStorage("merge.text") private var text = ""
+    @SceneStorage("merge.path") private var draftPath = ""
 
     var body: some View {
         Form {
@@ -72,12 +78,18 @@ struct MergeEditor: View {
                 Button("Use This") {
                     Task {
                         await model.resolve(conflict.path, with: .edited(text))
+                        draftPath = ""
                         dismiss()
                     }
                 }
                 .disabled(!text.hasPrefix("---\n"))
             }
         }
-        .onAppear { text = mine.isEmpty ? theirs : mine }
+        .onAppear {
+            if draftPath != conflict.path {
+                draftPath = conflict.path
+                text = mine.isEmpty ? theirs : mine
+            }
+        }
     }
 }
