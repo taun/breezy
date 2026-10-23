@@ -14,8 +14,8 @@ public struct NodeDate: Equatable, Sendable {
 
     public var label: String { precision == .year ? String(iso.prefix(4)) : iso }
 
-    /// Interprets decoded `date:` and `datePrecision:` values like lib/frontmatter.js: a bare integer year 1000-9999
-    /// becomes `YYYY-01-01` with year precision (unless a precision is given).
+    /// Interprets decoded `date:` and `datePrecision:` values like lib/frontmatter.js: a year alone (integer 1000-9999
+    /// or the string "YYYY") becomes `YYYY-01-01` with year precision (unless a precision is given).
     public static func parse(date: Any?, precision: Any?) -> NodeDate? {
         let given = (precision as? String).flatMap(DatePrecision.init(rawValue:))
         if let y = date as? Int {
@@ -24,7 +24,7 @@ public struct NodeDate: Equatable, Sendable {
         }
         guard let s = date as? String else { return nil }
         if s.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil { return NodeDate(iso: s, precision: given ?? .day) }
-        if s.range(of: #"^\d{4}$"#, options: .regularExpression) != nil { return NodeDate(iso: "\(s)-01-01", precision: given ?? .day) }
+        if s.range(of: #"^\d{4}$"#, options: .regularExpression) != nil { return NodeDate(iso: "\(s)-01-01", precision: given ?? .year) }
         return nil
     }
 }
