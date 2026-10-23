@@ -14,13 +14,13 @@ A macOS / iOS / iPadOS app (SwiftUI, multiplatform) for editing the content of t
 - **Storage:** plain files in the app's Documents folder (visible in the Files app; on macOS via "Show Local Files in Finder"), synced with the GitHub API, not a git clone (iOS has no git). Every branch opened stays on the device. Branches are first-class: create (offline too), select, commit to, and merge them.
 - **Offline commits** queue on the device and are pushed in order as separate GitHub commits.
 - **Conflicts** (a file changed both locally and on GitHub since the last sync) are resolved file by file: keep mine, use GitHub's, or edit a merged version. Nothing is pushed while any are open.
-- **Merging:** open a pull request and merge it through the API (merge / squash / rebase choice). GitHub reports conflicts; Breezy does not resolve file conflicts in v1.
+- **Merging:** open a pull request and merge it through the API (merge / squash / rebase choice). Conflicts *inside a pull request* are reported by GitHub and resolved there; Breezy only resolves conflicts between local edits and GitHub during sync (see Conflicts above).
 - **Auth:** a fine-grained personal access token (contents + pull requests read/write, optionally actions read; this repo only), stored as a synchronizable Keychain item so iCloud Keychain delivers it to the user's other devices. On macOS that requires the data protection keychain; both platforms must be signed with the same team. Tokens saved by older builds (device-only) are migrated on first read.
 - **State restoration:** the app must relaunch looking exactly as it was left, mid-edit included. Content edits are saved to disk as typed; UI state (selected node per branch, which column the iPhone was showing, open sheet, drafts, search/filter, preview mode, focused field, body cursor on iOS 18 / macOS 15+) uses `@AppStorage`, not `@SceneStorage`: iOS discards scene storage when the app is swiped away or stopped, and restoring must survive that. Add new UI state the same way.
 - **Publishing:** merge the current branch into the default branch via a pull request (`Publisher`), then watch the GitHub Actions deploy and offer View Website (opens the default browser; URL from `src/CNAME`, editable in Settings).
 - **Preview:** native Markdown rendering in the app. No web view of the deployed site.
 - **Assets:** v1 only references existing files in `src/assets/` (choose a path); no uploads.
-- **v1 scope:** node list and search; node editor with validation; link and relation editor; branches and pull requests.
+- **iPhone / iPad layout:** the split view collapses on iPhone, and toolbar items attached to the split view itself are not shown there. iOS controls live on the node list's bar (branch as a title menu, sync status, Commit, a More menu); the Mac keeps them in the window toolbar. Sheets get a minimum size only on macOS (`macSheetFrame`).
 
 ## Structure
 
@@ -44,10 +44,19 @@ A macOS / iOS / iPadOS app (SwiftUI, multiplatform) for editing the content of t
 ## Commands
 
 ```
-cd Packages/BreezyKit && swift test --scratch-path /tmp/breezy-build      # core tests
-xcodegen generate                                                          # (re)create Breezy.xcodeproj after adding files
-xcodebuild -project Breezy.xcodeproj -scheme Breezy -destination 'platform=macOS' -derivedDataPath /tmp/breezy-dd CODE_SIGNING_ALLOWED=NO build
-xcodebuild -project Breezy.xcodeproj -scheme Breezy -destination 'generic/platform=iOS Simulator' -derivedDataPath /tmp/breezy-dd CODE_SIGNING_ALLOWED=NO build
+scripts/test.sh                 # BreezyKit tests (swift test); extra args pass through, e.g. --filter Workspace
+scripts/build.sh [macos|ios]    # xcodegen generate + unsigned builds for macOS and/or the iOS Simulator
+scripts/simulator.sh [device]   # build, install in the simulator seeded with the site's nodes, launch, screenshot
 ```
 
-Builds and tests fail at code signing when their output is inside `~/Documents` ("resource fork, Finder information, or similar detritus not allowed"), so keep `--scratch-path` / `-derivedDataPath` outside it. To run on a device, open the project in Xcode and set a development team (automatic signing); the Keychain token store needs a signed app. The fixture tests look for the site repo at `../taun.github.io` (sibling of this repo); set `BREEZY_SITE_DIR` to override.
+- Build output must stay outside `~/Documents` (code signing fails on Finder metadata there); the scripts use `$TMPDIR`.
+- Run `xcodegen generate` (the build scripts do) after adding or removing files; `Breezy.xcodeproj` is not committed. The team is set in `project.yml`, so do not set it in Xcode.
+- The fixture tests look for the site repo at `../taun.github.io`; set `BREEZY_SITE_DIR` to override.
+- **Checking UI changes:** `scripts/simulator.sh` needs no token: it writes the site's nodes into the app's local store, so the app opens offline with real content, and saves a screenshot to read. `BREEZY_DEFAULTS='key=value ...'` presets `@AppStorage` keys to test restoration. It cannot tap; interactive flows still need a person.
+- Only iOS 17.2 simulators are installed here; behavior on newer iOS (e.g. search bar placement) can differ.
+
+## Conventions
+
+- Add a line under **Unreleased** in `CHANGELOG.md` for every user-visible change. Releasing is described in `README.md` (version in `project.yml`, then an annotated `vX.Y.Z` tag).
+- New UI state and drafts get `@AppStorage` keys (see State restoration). New features must work offline, or degrade clearly when offline (see Offline-first).
+- Keep logic in BreezyKit with tests; network behavior is tested through `MockTransport`, never against GitHub.
