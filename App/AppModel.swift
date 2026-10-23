@@ -31,6 +31,8 @@ final class AppModel {
 
     var errorMessage: String?
     var showConflicts = false
+    /// Shown when the current branch is gone from GitHub but this device still has local changes on it.
+    var showBranchDeleted = false
     /// Set to ask the window to open Settings (e.g. from the sync status when there is no token).
     var wantsSettings = false
 
@@ -60,14 +62,29 @@ final class AppModel {
     var branchNames: [String] { Array(Set(repoState.remoteBranches).union(store?.cachedBranches() ?? [])).sorted() }
     func isOnDevice(_ branch: String) -> Bool { store?.branchState(named: branch) != nil }
 
+    /// On this device, was on GitHub, and is not there any more (kept because it has local changes).
+    func isDeletedOnGitHub(_ branch: String) -> Bool {
+        guard let state = store?.branchState(named: branch) else { return false }
+        return state.existsOnRemote && !repoState.remoteBranches.contains(branch)
+    }
+
+    /// Branch menu label: name plus default / not on device / deleted on GitHub.
+    func branchLabel(_ name: String) -> String {
+        var label = name
+        if name == defaultBranch { label += " (default)" }
+        if !isOnDevice(name) { label += " (not on device)" } else if isDeletedOnGitHub(name) { label += " (deleted on GitHub)" }
+        return label
+    }
+
     enum SyncStatus: Equatable {
-        case offline, syncing, conflicts(Int), noToken, pending(Int), failed, synced
+        case offline, syncing, conflicts(Int), branchDeleted, noToken, pending(Int), failed, synced
     }
 
     var syncStatus: SyncStatus {
         guard let ws = workspace else { return isOnline ? .synced : .offline }
         if isBusy || ws.isSyncing { return .syncing }
         if !ws.conflicts.isEmpty { return .conflicts(ws.conflicts.count) }
+        if ws.isDeletedOnGitHub { return .branchDeleted }
         if !hasToken { return .noToken }
         if !isOnline { return .offline }
         if lastSyncError != nil { return .failed }
@@ -170,11 +187,72 @@ final class AppModel {
                 let cname = try await client.fileText("src/CNAME", ref: repoState.defaultBranch)
                 repoState.websiteURL = Publisher.siteURL(repo: repo, cname: cname)
             }
+            pruneDeletedBranches(store)
             try store.saveRepoState(repoState)
-            if let ws = workspace, case .conflicts = try await ws.sync(client: client) { showConflicts = true }
+            if let ws = workspace {
+                switch try await ws.sync(client: client) {
+                case .conflicts: showConflicts = true
+                case .branchDeleted(hasLocalChanges: false): try await leaveDeletedBranch(ws.branch, client: client, store: store)
+                case .branchDeleted(hasLocalChanges: true): showBranchDeleted = true
+                case .synced: break
+                }
+            }
             pullRequests = try await client.openPullRequests()
             lastSyncError = nil
         } catch {
+            handle(error)
+        }
+    }
+
+    /// Removes copies of branches that are gone from GitHub and hold nothing that is not on GitHub
+    /// (typically published and deleted on another device). Copies with local changes stay, marked in the menus.
+    private func pruneDeletedBranches(_ store: LocalStore) {
+        for name in store.cachedBranches()
+        where name != currentBranch && !repoState.remoteBranches.contains(name) && !store.hasLocalChanges(name) {
+            try? store.removeBranch(name)
+        }
+    }
+
+    /// The current branch was published or deleted elsewhere and has nothing local: drop it and go to the default branch.
+    private func leaveDeletedBranch(_ name: String, client: GitHubClient, store: LocalStore) async throws {
+        let main = repoState.defaultBranch
+        let next: SiteWorkspace
+        if let local = try SiteWorkspace.open(main, store: store) { next = local } else {
+            next = try await SiteWorkspace.download(main, client: client, store: store)
+        }
+        workspace = next
+        try? store.removeBranch(name)
+        repoState.lastBranch = main
+        try store.saveRepoState(repoState)
+        if case .conflicts = try await next.sync(client: client) { showConflicts = true }
+        errorMessage = "“\(name)” was published or deleted on another device, so Breezy switched to \(main)."
+    }
+
+    // MARK: A branch deleted on GitHub with local changes here
+
+    /// Creates the branch on GitHub again at the commit this copy is based on, then pushes its commits.
+    func recreateBranchOnGitHub() async {
+        guard let ws = workspace else { return }
+        attempt { try ws.recreateOnGitHub() }
+        showBranchDeleted = false
+        await sync()
+    }
+
+    /// Moves the local changes onto a new branch from the default branch's current files.
+    func moveEditsToNewBranch(_ name: String) async {
+        guard let ws = workspace, let client, let store else { return }
+        guard isOnline else { errorMessage = "Moving the edits needs a connection to read \(defaultBranch)."; return }
+        isBusy = true
+        do {
+            let moved = try await ws.moveEdits(toNewBranch: name, from: defaultBranch, client: client)
+            workspace = moved
+            repoState.lastBranch = name
+            try store.saveRepoState(repoState)
+            showBranchDeleted = false
+            isBusy = false
+            if !moved.conflicts.isEmpty { showConflicts = true } else { await sync() }
+        } catch {
+            isBusy = false
             handle(error)
         }
     }

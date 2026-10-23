@@ -102,6 +102,12 @@ public final class SiteWorkspace {
     }
 
     public var hasChanges: Bool { !changes.isEmpty }
+
+    /// Anything here that is not on GitHub: uncommitted edits or queued commits.
+    public var hasLocalChanges: Bool { hasChanges || !queue.isEmpty }
+
+    /// The branch was found deleted on GitHub while this copy had local changes; see `recreateOnGitHub` and `moveEdits`.
+    public var isDeletedOnGitHub: Bool { state.deletedOnGitHubAt != nil }
     public func isModified(_ slug: String) -> Bool { committedText[slug] != nodes[slug]?.rendered() }
 
     /// Text of a node in the base snapshot / GitHub's pending snapshot, for showing conflicts.
@@ -172,6 +178,9 @@ public final class SiteWorkspace {
         case synced(pushed: Int)
         /// GitHub changed files that were also changed here; resolve them, then sync again.
         case conflicts(Int)
+        /// The branch is gone from GitHub (usually published and deleted on another device). Without local changes
+        /// the copy can simply be removed; with them, use `recreateOnGitHub` or `moveEdits(toNewBranch:from:client:)`.
+        case branchDeleted(hasLocalChanges: Bool)
     }
 
     /// Creates the branch on GitHub if needed, takes GitHub's newer files, and pushes queued commits in order.
@@ -185,7 +194,20 @@ public final class SiteWorkspace {
             state.existsOnRemote = true
             try store.saveBranchState(state)
         }
-        let head = try await client.headSHA(of: branch)
+        let head: String
+        do {
+            head = try await client.headSHA(of: branch)
+        } catch GitHubError.branchNotFound {
+            if hasLocalChanges, state.deletedOnGitHubAt == nil {
+                state.deletedOnGitHubAt = .now
+                try store.saveBranchState(state)
+            }
+            return .branchDeleted(hasLocalChanges: hasLocalChanges)
+        }
+        if state.deletedOnGitHubAt != nil { // it is back (recreated elsewhere)
+            state.deletedOnGitHubAt = nil
+            try store.saveBranchState(state)
+        }
         if head != state.base.commit {
             let remote = try await Self.fetchSnapshot(commit: head, client: client, store: store)
             let found = conflicts(with: remote)
@@ -268,6 +290,42 @@ public final class SiteWorkspace {
     }
 
     // MARK: Branches
+
+    /// Recreates a branch that was deleted on GitHub, at the commit this copy is based on (GitHub keeps it, for
+    /// example through the pull request), so the next `sync` creates it and pushes the queued commits.
+    public func recreateOnGitHub() throws {
+        state.existsOnRemote = false
+        state.deletedOnGitHubAt = nil
+        try store.saveBranchState(state)
+    }
+
+    /// Moves this copy's local changes (uncommitted edits and queued commits, as uncommitted edits) onto a new branch
+    /// created on this device from `base`'s current files on GitHub. Files `base` also changed differently become
+    /// conflicts, resolved file by file as usual. This branch's local copy is removed afterwards.
+    public func moveEdits(toNewBranch name: String, from base: String, client: GitHubClient) async throws -> SiteWorkspace {
+        guard store.branchState(named: name) == nil else { throw WorkspaceError.branchExists(name) }
+        let target = try await Self.fetchSnapshot(base, client: client, store: store)
+        let touched = Set(queue.flatMap { $0.changes.map(\.path) })
+            .union(store.working(branch).keys.map(Self.path))
+            .union(state.deleted.map(Self.path))
+        var newState = BranchState(branch: name, base: target, existsOnRemote: false, fetchedAt: .now)
+        var edits: [String: String] = [:]
+        for path in touched.sorted() {
+            let mine = localText(path: path)
+            let mineSHA = mine.map(GitBlob.sha)
+            let theirs = target.files[path]
+            if mineSHA == theirs { continue } // already the same on the new base
+            if let mine { edits[Self.slug(path)] = mine } else { newState.deleted.append(Self.slug(path)) }
+            if theirs != state.base.files[path] { // the new base changed it too
+                newState.conflicts.append(Conflict(path: path, baseSHA: state.base.files[path], remoteSHA: theirs))
+            }
+        }
+        for (slug, text) in edits { try store.saveWorking(text, slug: slug, branch: name) }
+        try store.saveBranchState(newState)
+        let moved = try SiteWorkspace(store: store, state: newState)
+        try store.removeBranch(branch)
+        return moved
+    }
 
     /// Creates a branch on this device from this branch's base, moving the uncommitted edits to it.
     /// It is created on GitHub at the next sync. Refused while commits are queued, so they are never pushed twice.

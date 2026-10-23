@@ -157,3 +157,85 @@ func client(_ m: MockTransport) -> GitHubClient { GitHubClient(repo: RepoRef(own
         #expect(throws: WorkspaceError.self) { try ws.createNode(slug: "a", title: "dup", type: "x") }
     }
 }
+
+/// A branch published and deleted on another device: GitHub answers 404 for it.
+@MainActor @Suite struct DeletedBranchTests {
+    /// Downloads "edit" (same files as the site fixture's main) into a fresh store.
+    func editBranch() async throws -> (SiteWorkspace, MockTransport, LocalStore) {
+        let m = MockTransport.site()
+        m.on("GET /git/ref/heads/edit", ["object": ["sha": "c1"]])
+        let store = tempStore()
+        let ws = try await SiteWorkspace.download("edit", client: client(m), store: store)
+        m.on("GET /git/ref/heads/edit", status: 404, ["message": "Not Found"]) // now deleted
+        return (ws, m, store)
+    }
+
+    @Test func headOfMissingBranchIsBranchNotFound() async {
+        await #expect(throws: GitHubError.branchNotFound("gone")) { _ = try await client(MockTransport()).headSHA(of: "gone") }
+    }
+
+    @Test func deletedWithoutLocalChangesIsReportedAndCanBeDropped() async throws {
+        let (ws, _, store) = try await editBranch()
+        #expect(try await ws.sync(client: client(MockTransport())) == .branchDeleted(hasLocalChanges: false))
+        #expect(!ws.isDeletedOnGitHub) // nothing to keep, so no lasting mark
+        #expect(!store.hasLocalChanges("edit"))
+    }
+
+    @Test func deletedWithQueuedCommitsCanBeRecreatedAndPushed() async throws {
+        let (ws, m, store) = try await editBranch()
+        try ws.update("a") { try $0.setTitle("Late edit") }
+        try ws.commit(message: "Late edit")
+        #expect(try await ws.sync(client: client(m)) == .branchDeleted(hasLocalChanges: true))
+        #expect(ws.isDeletedOnGitHub)
+        #expect(try SiteWorkspace.open("edit", store: store)?.isDeletedOnGitHub == true) // survives relaunch
+        #expect(store.hasLocalChanges("edit"))
+
+        try ws.recreateOnGitHub()
+        m.on("POST /git/refs", status: 201, ["ref": "refs/heads/edit"])
+        m.on("GET /git/ref/heads/edit", ["object": ["sha": "c1"]])
+        m.on("POST /git/trees", ["sha": "t2"])
+        m.on("POST /git/commits", ["sha": "c2"])
+        m.on("PATCH /git/refs/heads/edit", ["object": ["sha": "c2"]])
+        #expect(try await ws.sync(client: client(m)) == .synced(pushed: 1))
+        #expect(m.bodies("POST /git/refs").first?["sha"] as? String == "c1") // recreated at the copy's base
+        #expect(!ws.isDeletedOnGitHub)
+    }
+
+    @Test func editsMoveOntoNewBranchFromMainWithConflictsForFilesMainChangedToo() async throws {
+        let (ws, m, store) = try await editBranch()
+        try ws.update("a") { try $0.setTitle("Mine A") }     // main also changes a, differently -> conflict
+        try ws.update("b") { try $0.setTitle("Published B") } // main has exactly this already -> nothing to move
+        let publishedB = try #require(ws.nodes["b"]).rendered()
+        try ws.commit(message: "Edits")
+        try ws.createNode(slug: "new-one", title: "New", type: "talk") // only here -> moves cleanly
+        #expect(try await ws.sync(client: client(m)) == .branchDeleted(hasLocalChanges: true))
+
+        m.remoteMoves(to: "c9", changing: [
+            "src/nodes/a.md": "---\ntitle: \"Main A\"\ntype: person\nlinks: []\n---\n",
+            "src/nodes/b.md": publishedB,
+        ])
+        let moved = try await ws.moveEdits(toNewBranch: "edit-2", from: "main", client: client(m))
+        #expect(moved.branch == "edit-2" && !moved.state.existsOnRemote && moved.headSHA == "c9")
+        #expect(moved.conflicts.map(\.path) == ["src/nodes/a.md"])
+        #expect(moved.nodes["a"]?.title == "Mine A")
+        #expect(moved.nodes["new-one"]?.title == "New")
+        #expect(moved.changes.map(\.path) == ["src/nodes/a.md", "src/nodes/new-one.md"])
+        #expect(store.branchState(named: "edit") == nil) // old copy removed
+        #expect(store.cachedBranches() == ["edit-2"])
+
+        try moved.resolve("src/nodes/a.md", with: .theirs)
+        #expect(moved.nodes["a"]?.title == "Main A")
+        #expect(moved.changes.map(\.path) == ["src/nodes/new-one.md"])
+    }
+
+    @Test func storeKnowsWhichCopiesHoldLocalWork() async throws {
+        let (ws, _, store) = try await editBranch()
+        #expect(!store.hasLocalChanges("edit"))
+        try ws.update("a") { try $0.setTitle("x") }
+        #expect(store.hasLocalChanges("edit"))
+        try ws.revert("a")
+        #expect(!store.hasLocalChanges("edit"))
+        _ = try ws.branchOff("local-only")
+        #expect(store.hasLocalChanges("local-only")) // never pushed
+    }
+}

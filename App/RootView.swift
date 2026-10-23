@@ -91,6 +91,9 @@ struct RootView: View {
             }
             .macSheetFrame(minWidth: 460, minHeight: 480)
         }
+        .sheet(isPresented: $model.showBranchDeleted) {
+            NavigationStack { BranchDeletedView() }.macSheetFrame(minWidth: 480, minHeight: 380)
+        }
         .sheet(isPresented: $model.showConflicts) {
             NavigationStack { ConflictsView() }.macSheetFrame(minWidth: 560, minHeight: 520)
         }
@@ -116,7 +119,7 @@ struct RootView: View {
         Picker("Branch", selection: Binding(get: { ws.branch }, set: { requestSwitch(to: $0, in: ws) })) {
             ForEach(model.branchNames, id: \.self) { name in
                 let onDevice = model.isOnDevice(name)
-                Text(name + (name == model.defaultBranch ? " (default)" : "") + (onDevice ? "" : " (not on device)"))
+                Text(model.branchLabel(name))
                     .tag(name)
                     .selectionDisabled(!onDevice && !model.isOnline)
             }
@@ -206,6 +209,7 @@ struct SyncStatusButton: View {
         Button {
             switch model.syncStatus {
             case .conflicts: model.showConflicts = true
+            case .branchDeleted: model.showBranchDeleted = true
             case .noToken: model.wantsSettings = true
             default: Task { await model.sync() }
             }
@@ -228,6 +232,7 @@ struct SyncStatusButton: View {
         switch s {
         case .offline: ("Offline", "wifi.slash", .secondary)
         case .noToken: ("No GitHub token", "key.slash", .orange)
+        case .branchDeleted: ("Deleted on GitHub", "exclamationmark.triangle.fill", .orange)
         case .syncing: ("Syncing", "arrow.triangle.2.circlepath", .secondary)
         case let .conflicts(n): ("\(n) conflict\(n == 1 ? "" : "s")", "exclamationmark.triangle.fill", .orange)
         case let .pending(n): (n == 0 ? "Not pushed" : "\(n) to push", "arrow.up.circle", .blue)

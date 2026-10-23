@@ -10,6 +10,7 @@ All notable changes to Breezy are documented here. The format follows [Keep a Ch
 
 ### Fixed
 
+- **A branch published and deleted on another device** no longer leaves this device stuck on "Sync failed". If the copy here has nothing unpushed, Breezy removes it and switches to `main`. If it has edits or commits, Breezy keeps them and offers to recreate the branch on GitHub (recommended) or to move the changes to a new branch from `main`, with conflicts settled file by file. Other devices' copies of deleted branches without local changes are cleaned up automatically. Copies with local changes are marked "deleted on GitHub" in the branch menus.
 - Hiding the node list with no node selected could relaunch into an empty window with no visible way back. With nothing selected, the list is now always shown.
 
 ## [1.0.0] - 2026-10-23

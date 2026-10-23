@@ -27,6 +27,8 @@ public enum GitHubError: Error, Equatable, LocalizedError {
     /// The branch moved since it was loaded; reload before committing.
     case branchMoved(branch: String, expected: String, actual: String)
     case mergeFailed(String)
+    /// The branch does not exist on GitHub (published and deleted elsewhere, or deleted on github.com).
+    case branchNotFound(String)
 
     public var errorDescription: String? {
         switch self {
@@ -35,6 +37,7 @@ public enum GitHubError: Error, Equatable, LocalizedError {
             status == 401 ? "GitHub rejected the token (401). Check it in Settings." : "GitHub error \(status): \(message)"
         case let .branchMoved(branch, _, _): "“\(branch)” changed on GitHub since it was loaded. Reload, then commit again."
         case let .mergeFailed(message): "Merge failed: \(message)"
+        case let .branchNotFound(branch): "“\(branch)” no longer exists on GitHub."
         }
     }
 }

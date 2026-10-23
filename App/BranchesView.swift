@@ -32,7 +32,8 @@ struct BranchesView: View {
                                 Text(name)
                                 if name == model.defaultBranch { Text("default").font(.caption).foregroundStyle(.secondary) }
                                 Spacer()
-                                Text(onDevice ? "on device" : "GitHub only").font(.caption).foregroundStyle(.secondary)
+                                Text(!onDevice ? "GitHub only" : model.isDeletedOnGitHub(name) ? "deleted on GitHub" : "on device")
+                                    .font(.caption).foregroundStyle(model.isDeletedOnGitHub(name) ? .orange : .secondary)
                                 if name == ws.branch { Image(systemName: "checkmark") }
                             }
                         }

@@ -62,6 +62,9 @@ public struct BranchState: Codable, Equatable, Sendable {
     /// Set while reconciling: GitHub's newer snapshot, adopted once every conflict is resolved.
     public var pendingRemote: Snapshot?
     public var conflicts: [Conflict] = []
+    /// When a sync found the branch gone from GitHub (published and deleted on another device, or deleted on
+    /// github.com) while this copy still had local changes. Optional so older state files still decode.
+    public var deletedOnGitHubAt: Date?
 
     public init(branch: String, base: Snapshot, existsOnRemote: Bool, fetchedAt: Date? = nil) {
         self.branch = branch

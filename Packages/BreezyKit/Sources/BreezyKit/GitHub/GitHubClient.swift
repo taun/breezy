@@ -32,9 +32,14 @@ public struct GitHubClient: Sendable {
         }
     }
 
-    /// Head commit of a branch.
+    /// Head commit of a branch. Throws `GitHubError.branchNotFound` if the branch does not exist (e.g. deleted after publishing).
     public func headSHA(of branch: String) async throws -> String {
-        let json = try await object("GET", "/git/ref/heads/\(Self.escapeRef(branch))")
+        let json: [String: Any]
+        do {
+            json = try await object("GET", "/git/ref/heads/\(Self.escapeRef(branch))")
+        } catch GitHubError.http(404, _) {
+            throw GitHubError.branchNotFound(branch)
+        }
         guard let sha = (json["object"] as? [String: Any])?["sha"] as? String else { throw GitHubError.invalidResponse }
         return sha
     }

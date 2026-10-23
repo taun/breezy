@@ -89,6 +89,13 @@ public struct LocalStore: Sendable {
         try write(q, to: branchDir(branch).appendingPathComponent("queue.json"))
     }
 
+    /// Whether a branch's copy holds anything not on GitHub: queued commits, uncommitted edits or deletions,
+    /// or (for a branch created on this device) the branch itself.
+    public func hasLocalChanges(_ branch: String) -> Bool {
+        guard let state = branchState(named: branch) else { return false }
+        return !state.existsOnRemote || !queue(branch).isEmpty || !working(branch).isEmpty || !state.deleted.isEmpty
+    }
+
     public func removeBranch(_ branch: String) throws {
         let dir = branchDir(branch)
         if fm.fileExists(atPath: dir.path) { try fm.removeItem(at: dir) }
