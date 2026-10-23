@@ -5,9 +5,9 @@ import SwiftUI
 struct BranchesView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
-    @SceneStorage("branches.new") private var newBranch = ""
-    @SceneStorage("branches.prTitle") private var prTitle = ""
-    @SceneStorage("branches.prBody") private var prBody = ""
+    @AppStorage("branches.new") private var newBranch = ""
+    @AppStorage("branches.prTitle") private var prTitle = ""
+    @AppStorage("branches.prBody") private var prBody = ""
     @State private var mergeMethod: MergeMethod = .squash
     @State private var deleteAfterMerge = true
 

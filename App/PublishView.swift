@@ -7,8 +7,8 @@ struct PublishView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @State private var comparison: Comparison?
-    @SceneStorage("publish.method") private var methodRaw = MergeMethod.squash.rawValue
-    @SceneStorage("publish.deleteBranch") private var deleteBranch = true
+    @AppStorage("publish.method") private var methodRaw = MergeMethod.squash.rawValue
+    @AppStorage("publish.deleteBranch") private var deleteBranch = true
     private var method: MergeMethod { MergeMethod(rawValue: methodRaw) ?? .squash }
     @State private var confirming = false
     @State private var published = false

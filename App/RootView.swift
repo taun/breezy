@@ -3,11 +3,20 @@ import SwiftUI
 
 struct RootView: View {
     @Environment(AppModel.self) private var model
-    // Window state, restored by the system with the window (SceneStorage), so a relaunch looks unchanged.
-    @SceneStorage("root.sheet") private var sheetRaw = ""
+    // UI state saved in the app's preferences, so a relaunch looks unchanged even after the app was swiped away or
+    // stopped (iOS discards SceneStorage in those cases). Content edits are saved separately, to disk, as typed.
+    @AppStorage("root.sheet") private var sheetRaw = ""
     /// Last selected node per branch, as JSON [branch: slug].
-    @SceneStorage("root.selectionByBranch") private var selectionJSON = "{}"
-    @SceneStorage("root.columns") private var columnsRaw = "automatic"
+    @AppStorage("root.selectionByBranch") private var selectionJSON = "{}"
+    @AppStorage("root.columns") private var columnsRaw = "automatic"
+    /// iPhone (collapsed split view): whether the list or the editor was showing.
+    @AppStorage("root.compactColumn") private var compactColumnRaw = "sidebar"
+
+    private var compactColumn: Binding<NavigationSplitViewColumn> {
+        Binding(
+            get: { compactColumnRaw == "detail" && selection.wrappedValue != nil ? .detail : .sidebar },
+            set: { compactColumnRaw = $0 == .detail ? "detail" : "sidebar" })
+    }
 
     private var sheet: Binding<Sheet?> {
         Binding(get: { Sheet(rawValue: sheetRaw) }, set: { sheetRaw = $0?.rawValue ?? "" })
@@ -44,7 +53,7 @@ struct RootView: View {
         @Bindable var model = model
         Group {
             if let ws = model.workspace {
-                NavigationSplitView(columnVisibility: columns) {
+                NavigationSplitView(columnVisibility: columns, preferredCompactColumn: compactColumn) {
                     sidebar(ws)
                 } detail: {
                     if let slug = selection.wrappedValue, ws.nodes[slug] != nil {

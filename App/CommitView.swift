@@ -4,7 +4,7 @@ import SwiftUI
 struct CommitView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
-    @SceneStorage("commit.message") private var message = ""
+    @AppStorage("commit.message") private var message = ""
 
     var body: some View {
         if let ws = model.workspace {

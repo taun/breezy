@@ -5,10 +5,10 @@ struct NodeListView: View {
     @Environment(AppModel.self) private var model
     let workspace: SiteWorkspace
     @Binding var selection: String?
-    @SceneStorage("list.search") private var search = ""
+    @AppStorage("list.search") private var search = ""
     /// "" means all types.
-    @SceneStorage("list.type") private var typeRaw = ""
-    @SceneStorage("list.showNew") private var showNew = false
+    @AppStorage("list.type") private var typeRaw = ""
+    @AppStorage("list.showNew") private var showNew = false
 
     private var typeFilter: String? { typeRaw.isEmpty ? nil : typeRaw }
 
@@ -88,10 +88,10 @@ struct NewNodeView: View {
     @Environment(\.dismiss) private var dismiss
     let workspace: SiteWorkspace
     @Binding var selection: String?
-    // Draft kept with the window, so a half-filled form survives a relaunch.
-    @SceneStorage("new.slug") private var slug = ""
-    @SceneStorage("new.title") private var title = ""
-    @SceneStorage("new.type") private var type = "post"
+    // Draft kept across relaunches, so a half-filled form survives.
+    @AppStorage("new.slug") private var slug = ""
+    @AppStorage("new.title") private var title = ""
+    @AppStorage("new.type") private var type = "post"
 
     private var slugIssues: [ValidationIssue] { slug.isEmpty ? [] : Validator.validateSlug(slug, existing: workspace.slugs) }
 

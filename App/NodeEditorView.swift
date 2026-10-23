@@ -6,9 +6,9 @@ struct NodeEditorView: View {
     let workspace: SiteWorkspace
     let slug: String
     @Environment(\.scenePhase) private var scenePhase
-    // Restored with the window: preview mode, and which field of which node was being edited ("slug|field").
-    @SceneStorage("editor.preview") private var showPreview = false
-    @SceneStorage("editor.focus") private var focusRaw = ""
+    // Restored on relaunch: preview mode, and which field of which node was being edited ("slug|field").
+    @AppStorage("editor.preview") private var showPreview = false
+    @AppStorage("editor.focus") private var focusRaw = ""
     @FocusState private var focus: Field?
 
     enum Field: String { case title, summary, body }

@@ -5,7 +5,7 @@ import SwiftUI
 struct ConflictsView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
-    @SceneStorage("conflicts.editing") private var editingPath = ""
+    @AppStorage("conflicts.editing") private var editingPath = ""
 
     private var editing: Binding<Conflict?> {
         Binding(get: { model.workspace?.conflicts.first { $0.path == editingPath } }, set: { editingPath = $0?.path ?? "" })
@@ -55,9 +55,9 @@ struct MergeEditor: View {
     let conflict: Conflict
     let mine: String
     let theirs: String
-    // The draft and the file it belongs to, kept with the window.
-    @SceneStorage("merge.text") private var text = ""
-    @SceneStorage("merge.path") private var draftPath = ""
+    // The draft and the file it belongs to, kept across relaunches.
+    @AppStorage("merge.text") private var text = ""
+    @AppStorage("merge.path") private var draftPath = ""
 
     var body: some View {
         Form {

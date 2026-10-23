@@ -1,12 +1,12 @@
 import SwiftUI
 
 /// The node body editor. On iOS 18 / macOS 15 and later it also remembers the cursor or selection per node,
-/// with the window, so a relaunch puts the cursor back exactly where it was.
+/// so a relaunch puts the cursor back exactly where it was.
 struct BodyEditor: View {
     @Binding var text: String
     let slug: String
     /// "slug|start|end" in UTF-16 offsets.
-    @SceneStorage("editor.bodySelection") private var stored = ""
+    @AppStorage("editor.bodySelection") private var stored = ""
 
     var body: some View {
         if #available(iOS 18, macOS 15, *) {
