@@ -53,7 +53,7 @@ scripts/simulator.sh [device]   # build, install in the simulator seeded with th
 - Build output must stay outside `~/Documents` (code signing fails on Finder metadata there); the scripts use `$TMPDIR`.
 - Run `xcodegen generate` (the build scripts do) after adding or removing files; `Breezy.xcodeproj` is not committed. The team is set in `project.yml`, so do not set it in Xcode.
 - The fixture tests look for the site repo at `../taun.github.io`; set `BREEZY_SITE_DIR` to override.
-- **Checking UI changes:** `scripts/simulator.sh` needs no token: it writes the site's nodes into the app's local store, so the app opens offline with real content, and saves a screenshot to read. `BREEZY_DEFAULTS='key=value ...'` presets `@AppStorage` keys to test restoration. It cannot tap; interactive flows still need a person.
+- **Checking UI changes:** `scripts/simulator.sh` needs no token: it writes the site's nodes into the app's local store, so the app opens offline with real content, and saves a screenshot to read. `BREEZY_DEFAULTS='key=value ...'` presets `@AppStorage` keys to test restoration. Interactive flows: when the XcodeBuildMCP server is available (it is configured at user scope on the main dev Mac with the simulator, ui-automation and macos workflows), use `snapshot_ui` to read the screen and `tap` / `type_text` / `swipe` to drive it. Set its session defaults first (project, scheme, simulator, and a `derivedDataPath` outside `~/Documents`).
 - Only iOS 17.2 simulators are installed here; behavior on newer iOS (e.g. search bar placement) can differ.
 
 ## Conventions
