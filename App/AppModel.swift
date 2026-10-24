@@ -64,6 +64,16 @@ final class AppModel {
     private var started = false
 
     init(tokens: TokenStore = KeychainTokenStore()) {
+        var tokens = tokens
+        #if DEBUG
+        // Test runs against a sandbox repo (scripts/simulator.sh with BREEZY_SANDBOX=1): the token comes from the
+        // environment and lives only in memory, so it never touches the Keychain or iCloud. Not in release builds.
+        let env = ProcessInfo.processInfo.environment
+        if let token = env["BREEZY_TEST_TOKEN"], !token.isEmpty, let repo = env["BREEZY_TEST_REPO"], RepoRef(repo) != nil {
+            tokens = MemoryTokenStore(token)
+            repoString = repo
+        }
+        #endif
         self.tokens = tokens
         hasToken = tokens.load() != nil
         updateTokenSync()
@@ -221,6 +231,12 @@ final class AppModel {
                 case .branchDeleted(hasLocalChanges: false): try await leaveDeletedBranch(ws.branch, client: client, store: store)
                 case .branchDeleted(hasLocalChanges: true): showBranchDeleted = true
                 case .synced: break
+                }
+                // A branch created on this device reaches GitHub during ws.sync, after the branch list was fetched
+                // above; record it, or the menus would call it "deleted on GitHub" until the next sync.
+                if let current = workspace, current.state.existsOnRemote, !repoState.remoteBranches.contains(current.branch) {
+                    repoState.remoteBranches.append(current.branch)
+                    try store.saveRepoState(repoState)
                 }
             }
             pullRequests = try await client.openPullRequests()

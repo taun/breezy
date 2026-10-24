@@ -43,6 +43,16 @@ The scripts put build output in `$TMPDIR`: building inside `~/Documents` fails a
 
 `scripts/simulator.sh` needs no token or network. It copies the nodes from the sibling site repo into the app's local storage, so the UI can be checked with real content. `BREEZY_DEMO_ACTIVITY='Downloading main…|12|41'` shows a fake progress banner (debug builds). `BREEZY_DEFAULTS` sets saved UI state before launch, for testing restoration, for example `BREEZY_DEFAULTS='root.selectionByBranch={"phase2":"history-of-flash"}' scripts/simulator.sh`.
 
+## Testing against GitHub (sandbox)
+
+Real flows (download, commit, conflicts, Publish, a branch deleted elsewhere) are tested against `taun/taun-io-sandbox`, a private copy of the site with Pages off, so nothing can reach www.taun.org. Refresh it from the site repo with `git push sandbox phase2:main` (add `--force` if it has test commits).
+
+```
+BREEZY_FRESH=1 BREEZY_SANDBOX=1 scripts/simulator.sh "iPhone 15 Pro"
+```
+
+`BREEZY_SANDBOX=1` makes a debug build use the sandbox with a fine-grained token stored in the Mac Keychain as `taun-io-sandbox-token` (`security add-generic-password -s taun-io-sandbox-token -a "$USER" -w`). The token goes straight from the Keychain into the app's environment and is kept in memory only. Release builds ignore it. `BREEZY_FRESH=1` starts from a clean install. With the XcodeBuildMCP server available, Claude Code can then tap through the app.
+
 ## Where things are
 
 - `Packages/BreezyKit`: everything testable. Reading and editing node files without disturbing their formatting, the GitHub client, the on-device storage, sync and publishing.

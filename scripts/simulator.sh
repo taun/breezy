@@ -9,6 +9,11 @@
 #        BREEZY_DEFAULTS  extra "key=value" pairs (space-separated) written to the app's preferences before launch,
 #                         e.g. 'root.compactColumn=detail editor.focus=history-of-flash|title' to test state restoration
 #        BREEZY_DEMO_ACTIVITY  debug builds: show a fake activity banner, "title|done|total" (e.g. 'Downloading main…|12|41')
+#        BREEZY_SANDBOX=1 debug builds: use the sandbox repo (BREEZY_SANDBOX_REPO, default taun/taun-io-sandbox) with the
+#                         token stored in the Mac Keychain as "taun-io-sandbox-token"; skips seeding, so the app
+#                         downloads from GitHub for real. The token goes straight from the Keychain to the app's
+#                         environment and is never printed or written to a file.
+#        BREEZY_FRESH=1   uninstall first, so the app starts with no local copy and no saved UI state
 set -eu
 cd "$(dirname "$0")/.."
 SITE="${BREEZY_SITE_DIR:-../taun.github.io}"
@@ -23,12 +28,13 @@ DD="${TMPDIR:-/tmp}/breezy-dd"
 xcodebuild -project Breezy.xcodeproj -scheme Breezy -destination "id=$UDID" -derivedDataPath "$DD" \
   CODE_SIGNING_ALLOWED=NO build -quiet
 xcrun simctl terminate "$UDID" org.taun.Breezy 2>/dev/null || true
+[ "${BREEZY_FRESH:-0}" = 1 ] && xcrun simctl uninstall "$UDID" org.taun.Breezy 2>/dev/null || true
 xcrun simctl install "$UDID" "$DD/Build/Products/Debug-iphonesimulator/Breezy.app"
 DATA="$(xcrun simctl get_app_container "$UDID" org.taun.Breezy data)"
 BRANCH="${BREEZY_BRANCH:-$(git -C "$SITE" branch --show-current)}"
 
-# Write the site's nodes in Breezy's on-device layout (see LocalStore.swift).
-python3 - "$DATA/Documents/taun/taun.github.io" "$SITE" "$BRANCH" <<'PY'
+ # Write the site's nodes in Breezy's on-device layout (see LocalStore.swift). Not for sandbox runs, which download.
+[ "${BREEZY_SANDBOX:-0}" = 1 ] || python3 - "$DATA/Documents/taun/taun.github.io" "$SITE" "$BRANCH" <<'PY'
 import hashlib, json, os, subprocess, sys
 root, site, branch = sys.argv[1:4]
 os.makedirs(f"{root}/objects", exist_ok=True)
@@ -54,7 +60,16 @@ PY
 for pair in ${BREEZY_DEFAULTS:-}; do
   xcrun simctl spawn "$UDID" defaults write org.taun.Breezy "${pair%%=*}" -string "${pair#*=}"
 done
-SIMCTL_CHILD_BREEZY_DEMO_ACTIVITY="${BREEZY_DEMO_ACTIVITY:-}" xcrun simctl launch "$UDID" org.taun.Breezy >/dev/null
+if [ "${BREEZY_SANDBOX:-0}" = 1 ]; then
+  TOKEN="$(security find-generic-password -s taun-io-sandbox-token -w 2>/dev/null)" \
+    || { echo "No 'taun-io-sandbox-token' in the Keychain"; exit 1; }
+  SIMCTL_CHILD_BREEZY_TEST_TOKEN="$TOKEN" SIMCTL_CHILD_BREEZY_TEST_REPO="${BREEZY_SANDBOX_REPO:-taun/taun-io-sandbox}" \
+    xcrun simctl launch "$UDID" org.taun.Breezy >/dev/null
+  unset TOKEN
+  echo "Launched against ${BREEZY_SANDBOX_REPO:-taun/taun-io-sandbox}"
+else
+  SIMCTL_CHILD_BREEZY_DEMO_ACTIVITY="${BREEZY_DEMO_ACTIVITY:-}" xcrun simctl launch "$UDID" org.taun.Breezy >/dev/null
+fi
 sleep 4
 xcrun simctl io "$UDID" screenshot "$SHOT" >/dev/null
 echo "Screenshot: $SHOT"

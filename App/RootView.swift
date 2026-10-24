@@ -142,9 +142,15 @@ struct RootView: View {
             .toolbarTitleMenu { branchMenu(ws) }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { SyncStatusButton(compact: true) }
+                // Commit lives at the bottom: the top bar is full on iPhone, and iOS would hide it in an overflow menu.
                 if ws.hasChanges {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button { sheetRaw = Sheet.commit.rawValue } label: { Text("Commit (\(ws.changes.count))").bold() }
+                    ToolbarItem(placement: .bottomBar) {
+                        let n = ws.changes.count
+                        Button { sheetRaw = Sheet.commit.rawValue } label: {
+                            Label("Commit \(n) Change\(n == 1 ? "" : "s")", systemImage: "checkmark.circle")
+                                .labelStyle(.titleAndIcon).bold()
+                        }
+                        .buttonStyle(.borderedProminent)
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) { moreMenu(ws) }
