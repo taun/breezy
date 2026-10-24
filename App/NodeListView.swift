@@ -9,6 +9,8 @@ struct NodeListView: View {
     /// "" means all types.
     @AppStorage("list.type") private var typeRaw = ""
     @AppStorage("list.showNew") private var showNew = false
+    /// Slug awaiting delete confirmation ("" = none); kept across relaunches like the rest of the UI state.
+    @AppStorage("list.pendingDelete") private var pendingDelete = ""
 
     private var typeFilter: String? { typeRaw.isEmpty ? nil : typeRaw }
 
@@ -27,9 +29,9 @@ struct NodeListView: View {
                     .tag(node.slug)
                     .contextMenu {
                         if workspace.isModified(node.slug) { Button("Revert Changes") { try? workspace.revert(node.slug) } }
-                        Button("Delete", role: .destructive) { delete(node.slug) }
+                        Button("Delete", role: .destructive) { pendingDelete = node.slug }
                     }
-                    .swipeActions { Button("Delete", role: .destructive) { delete(node.slug) } }
+                    .swipeActions { Button("Delete", role: .destructive) { pendingDelete = node.slug } }
             }
         }
         .searchable(text: $search, prompt: "Title, slug or tag")
@@ -53,6 +55,18 @@ struct NodeListView: View {
             NavigationStack { NewNodeView(workspace: workspace, selection: $selection) }.macSheetFrame(minWidth: 420, minHeight: 320)
         }
         .refreshable { await model.sync() }
+        .confirmationDialog(
+            "Delete “\(workspace.nodes[pendingDelete]?.title ?? pendingDelete)”?",
+            isPresented: Binding(get: { workspace.nodes[pendingDelete] != nil }, set: { if !$0 { pendingDelete = "" } }),
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                delete(pendingDelete)
+                pendingDelete = ""
+            }
+        } message: {
+            Text("It is removed from \(workspace.branch) when you commit. Until then you can restore it from the Commit screen.")
+        }
     }
 
     private func delete(_ slug: String) {

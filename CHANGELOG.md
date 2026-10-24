@@ -7,6 +7,7 @@ All notable changes to Breezy are documented here. The format follows [Keep a Ch
 ### Added
 
 - **View › Show/Hide Sidebar** (⌃⌘S) on the Mac and with an iPad keyboard.
+- **Delete asks first**, and any uncommitted change, including a deleted node, can be undone from the Commit screen by swiping or long-pressing it.
 - **Offline status shows waiting commits:** "Offline · 2 to push" (on iPhone, the offline icon with a count), so it is clear work is saved and will go up when the connection returns.
 - **Progress for slow operations:** a banner at the bottom of the window (and of open sheets) says what Breezy is doing — downloading a branch, syncing, publishing, opening or merging a pull request — with a progress bar and file count while files download. The first download shows the same progress full screen.
 
