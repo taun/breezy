@@ -148,18 +148,23 @@ struct RootView: View {
             .toolbarTitleMenu { branchMenu(ws) }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { SyncStatusButton(compact: true) }
-                // Commit lives at the bottom: the top bar is full on iPhone, and iOS would hide it in an overflow menu.
-                if ws.hasChanges {
-                    ToolbarItem(placement: .bottomBar) {
-                        let n = ws.changes.count
-                        Button { sheetRaw = Sheet.commit.rawValue } label: {
-                            Label("Commit \(n) Change\(n == 1 ? "" : "s")", systemImage: "checkmark.circle")
-                                .labelStyle(.titleAndIcon).bold()
-                        }
-                        .buttonStyle(.borderedProminent)
-                    }
-                }
                 ToolbarItem(placement: .topBarTrailing) { moreMenu(ws) }
+            }
+            // Commit sits below the list as a plain button, not a toolbar item: the top bar is full on iPhone (iOS hid
+            // it in an overflow menu), and iOS 26 draws bottom-toolbar buttons as an unlabeled glass icon.
+            .safeAreaInset(edge: .bottom) {
+                if ws.hasChanges {
+                    let n = ws.changes.count
+                    Button { sheetRaw = Sheet.commit.rawValue } label: {
+                        Label("Commit \(n) Change\(n == 1 ? "" : "s")", systemImage: "checkmark.circle")
+                            .labelStyle(.titleAndIcon).bold()
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
+                }
             }
         #else
         NodeListView(workspace: ws, selection: selection)

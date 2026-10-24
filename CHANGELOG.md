@@ -14,8 +14,8 @@ All notable changes to Breezy are documented here. The format follows [Keep a Ch
 
 ### Fixed
 
-- **iPhone:** tapping a node did nothing on iOS 27, so nodes could not be opened for editing. Tapping a node now always opens it, and going back returns to the list.
-- **iPhone:** the Commit button could be hidden in the system's overflow menu when the top bar was full. It is now a prominent "Commit N Changes" button at the bottom of the node list.
+- **iPhone:** tapping a node did nothing on iOS 27, so nodes could not be opened for editing (#2). Tapping a node now always opens it, and going back returns to the list.
+- **iPhone:** the Commit button could be hidden in the system's overflow menu when the top bar was full, and on iOS 26 and later it showed only as an unlabeled blue check. It is now a full-width "Commit N Changes" button at the bottom of the node list.
 - The suggested commit message called new and deleted nodes "Edit". It now reads like "Add new-talk; Edit bowery; Delete a-theory".
 - A branch created in Breezy was briefly labeled "deleted on GitHub" in the branch menus until the next sync.
 - **A branch published and deleted on another device** no longer leaves this device stuck on "Sync failed". If the copy here has nothing unpushed, Breezy removes it and switches to `main`. If it has edits or commits, Breezy keeps them and offers to recreate the branch on GitHub (recommended) or to move the changes to a new branch from `main`, with conflicts settled file by file. Other devices' copies of deleted branches without local changes are cleaned up automatically. Copies with local changes are marked "deleted on GitHub" in the branch menus.
