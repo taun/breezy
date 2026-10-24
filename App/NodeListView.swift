@@ -11,12 +11,17 @@ struct NodeListView: View {
     @AppStorage("list.showNew") private var showNew = false
     /// Slug awaiting delete confirmation ("" = none); kept across relaunches like the rest of the UI state.
     @AppStorage("list.pendingDelete") private var pendingDelete = ""
+    /// List order (issue #1): most recently updated first, drafts on top, unless changed in the filter menu.
+    @AppStorage("list.sort") private var sortRaw = NodeSort.updated.rawValue
+    @AppStorage("list.draftsFirst") private var draftsFirst = true
+
+    private var sort: NodeSort { NodeSort(rawValue: sortRaw) ?? .updated }
 
     private var typeFilter: String? { typeRaw.isEmpty ? nil : typeRaw }
 
     private var visible: [NodeFile] {
         let q = search.trimmingCharacters(in: .whitespaces).lowercased()
-        return workspace.sortedNodes.filter { n in
+        return workspace.sortedNodes(by: sort, draftsFirst: draftsFirst).filter { n in
             (typeFilter == nil || n.type == typeFilter)
                 && (q.isEmpty || n.title.lowercased().contains(q) || n.slug.contains(q) || n.tags.contains { $0.lowercased().contains(q) })
         }
@@ -25,7 +30,8 @@ struct NodeListView: View {
     var body: some View {
         List(selection: $selection) {
             ForEach(visible, id: \.slug) { node in
-                NodeRow(node: node, modified: workspace.isModified(node.slug), hasIssues: !workspace.issues(for: node.slug).isEmpty)
+                NodeRow(node: node, modified: workspace.isModified(node.slug), hasIssues: !workspace.issues(for: node.slug).isEmpty,
+                        updated: sort == .updated ? workspace.lastUpdated(node.slug) : nil)
                     .tag(node.slug)
                     .contextMenu {
                         if workspace.isModified(node.slug) { Button("Revert Changes") { try? workspace.revert(node.slug) } }
@@ -41,6 +47,12 @@ struct NodeListView: View {
         .toolbar {
             ToolbarItem {
                 Menu {
+                    Picker("Sort by", selection: Binding(get: { sort }, set: { sortRaw = $0.rawValue })) {
+                        ForEach(NodeSort.allCases) { Text($0.label).tag($0) }
+                    }
+                    .pickerStyle(.inline)
+                    Toggle("Drafts First", isOn: $draftsFirst)
+                    Divider()
                     Picker("Type", selection: Binding(get: { typeFilter }, set: { typeRaw = $0 ?? "" })) {
                         Text("All types").tag(String?.none)
                         ForEach(workspace.types, id: \.self) { Text($0).tag(String?.some($0)) }
@@ -79,6 +91,8 @@ struct NodeRow: View {
     let node: NodeFile
     let modified: Bool
     let hasIssues: Bool
+    /// Shown when the list is sorted by last update.
+    var updated: Date? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -91,6 +105,9 @@ struct NodeRow: View {
             HStack(spacing: 6) {
                 Text(node.type).font(.caption).padding(.horizontal, 6).background(.quaternary, in: Capsule())
                 Text(node.date?.label ?? "undated").font(.caption).foregroundStyle(.secondary)
+                if let updated {
+                    Text("· updated \(updated, format: .relative(presentation: .named))").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
             }
         }
         .padding(.vertical, 2)

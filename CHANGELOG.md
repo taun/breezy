@@ -6,6 +6,7 @@ All notable changes to Breezy are documented here. The format follows [Keep a Ch
 
 ### Added
 
+- **Sort by last updated** (#1): the node list can be sorted by Last Updated (new default), Date or Title, with Drafts First (on by default) keeping drafts at the top. "Updated" is the file's latest commit on GitHub, or the time it was edited or committed on this device; rows show it ("updated 2 hours ago") when sorting that way. The dates are fetched once per file and stored for offline use.
 - **View › Show/Hide Sidebar** (⌃⌘S) on the Mac and with an iPad keyboard.
 - **Delete asks first**, and any uncommitted change, including a deleted node, can be undone from the Commit screen by swiping or long-pressing it.
 - **Offline status shows waiting commits:** "Offline · 2 to push" (on iPhone, the offline icon with a count), so it is clear work is saved and will go up when the connection returns.

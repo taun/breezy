@@ -143,6 +143,18 @@ public struct GitHubClient: Sendable {
             htmlURL: (run["html_url"] as? String).flatMap(URL.init(string:)))
     }
 
+    /// When `path` was last changed on `ref`: the committer date of the newest commit touching it, or nil if none.
+    public func lastCommitDate(path: String, ref: String) async throws -> Date? {
+        let list = try await array("GET", "/commits?sha=\(Self.escapeQuery(ref))&path=\(Self.escapeQuery(path))&per_page=1")
+        guard let commit = list.first?["commit"] as? [String: Any],
+              let date = (commit["committer"] as? [String: Any])?["date"] as? String else { return nil }
+        return ISO8601DateFormatter().date(from: date)
+    }
+
+    static func escapeQuery(_ value: String) -> String {
+        value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed.subtracting(CharacterSet(charactersIn: "&=+#"))) ?? value
+    }
+
     /// A text file at a ref, or nil if it does not exist.
     public func fileText(_ path: String, ref: String) async throws -> String? {
         do {

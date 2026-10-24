@@ -270,3 +270,73 @@ func client(_ m: MockTransport) -> GitHubClient { GitHubClient(repo: RepoRef(own
         #expect(ws.suggestedCommitMessage.hasPrefix("Add n1, n2, n3 and 2 more; Edit a; Delete b"))
     }
 }
+
+/// Issue #1: sort nodes by last updated, drafts first.
+@MainActor @Suite struct LastUpdatedTests {
+    static func iso(_ s: String) -> Date { ISO8601DateFormatter().date(from: s)! }
+
+    /// GitHub's last commit date for a node file on main.
+    func commitDate(_ m: MockTransport, _ slug: String, _ date: String, ref: String = "main") {
+        m.on("GET /commits?sha=\(ref)&path=src/nodes/\(slug).md&per_page=1", [["commit": ["committer": ["date": date]]]])
+    }
+
+    func synced() async throws -> (SiteWorkspace, MockTransport) {
+        let m = MockTransport.site()
+        commitDate(m, "a", "2020-01-01T00:00:00Z")
+        commitDate(m, "b", "2024-06-01T00:00:00Z")
+        let ws = try await SiteWorkspace.download("main", client: client(m), store: tempStore())
+        _ = try await ws.sync(client: client(m))
+        return (ws, m)
+    }
+
+    @Test func syncFetchesEachFilesLastCommitDate() async throws {
+        let (ws, m) = try await synced()
+        #expect(ws.lastUpdated("a") == Self.iso("2020-01-01T00:00:00Z"))
+        #expect(ws.lastUpdated("b") == Self.iso("2024-06-01T00:00:00Z"))
+        #expect(ws.sortedNodes(by: .updated, draftsFirst: false).map(\.slug) == ["b", "a"])
+        // Already known: the next sync asks GitHub for nothing.
+        let before = m.requests.filter { $0.key.hasPrefix("GET /commits?") }.count
+        _ = try await ws.sync(client: client(m))
+        #expect(m.requests.filter { $0.key.hasPrefix("GET /commits?") }.count == before)
+    }
+
+    @Test func editsOnThisDeviceCountAsUpdatedNow() async throws {
+        let (ws, _) = try await synced()
+        try ws.update("a") { try $0.setTitle("Fresh") }
+        #expect(ws.sortedNodes(by: .updated, draftsFirst: false).map(\.slug) == ["a", "b"])
+        try ws.commit(message: "Queued") // still newest while waiting to be pushed
+        #expect(ws.sortedNodes(by: .updated, draftsFirst: false).first?.slug == "a")
+    }
+
+    @Test func filesChangedOnGitHubGetTheirDateAgain() async throws {
+        let (ws, m) = try await synced()
+        m.remoteMoves(to: "c9", changing: ["src/nodes/a.md": "---\ntitle: \"A remote\"\ntype: person\nlinks: []\n---\n"])
+        commitDate(m, "a", "2026-01-01T00:00:00Z")
+        _ = try await ws.sync(client: client(m))
+        #expect(ws.lastUpdated("a") == Self.iso("2026-01-01T00:00:00Z"))
+        #expect(ws.lastUpdated("b") == Self.iso("2024-06-01T00:00:00Z")) // unchanged, not fetched again
+    }
+
+    @Test func pushedFilesAreDatedAtThePush() async throws {
+        let (ws, m) = try await synced()
+        try ws.update("a") { try $0.setTitle("Pushed") }
+        try ws.commit(message: "Push it")
+        m.acceptCommits()
+        let start = Date()
+        _ = try await ws.sync(client: client(m))
+        #expect(ws.state.fileDates?["src/nodes/a.md"].map { $0 >= start } == true)
+    }
+
+    @Test func sortOrdersAndDraftsFirst() async throws {
+        let (ws, _) = try await synced()
+        #expect(ws.sortedNodes(by: .title, draftsFirst: false).map(\.slug) == ["a", "b"])
+        #expect(ws.sortedNodes(by: .date, draftsFirst: false).map(\.slug) == ["b", "a"]) // b is dated 2001, a undated
+        try ws.update("a") { try $0.setDraft(true) }
+        #expect(ws.sortedNodes(by: .date, draftsFirst: true).map(\.slug) == ["a", "b"])
+        #expect(ws.sortedNodes(by: .date, draftsFirst: false).map(\.slug) == ["b", "a"])
+    }
+
+    @Test func branchNamesAndPathsAreEscapedInTheQuery() {
+        #expect(GitHubClient.escapeQuery("feature/a b&c") == "feature/a%20b%26c")
+    }
+}

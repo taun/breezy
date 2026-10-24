@@ -119,6 +119,11 @@ public struct LocalStore: Sendable {
 
     public func saveWorking(_ text: String, slug: String, branch: String) throws { try writeText(text, to: workingURL(branch, slug)) }
 
+    /// When the uncommitted edit of a node was last saved (its file's modification date), or nil if there is none.
+    public func workingDate(slug: String, branch: String) -> Date? {
+        (try? fm.attributesOfItem(atPath: workingURL(branch, slug).path))?[.modificationDate] as? Date
+    }
+
     public func removeWorking(slug: String, branch: String) throws {
         let u = workingURL(branch, slug)
         if fm.fileExists(atPath: u.path) { try fm.removeItem(at: u) }

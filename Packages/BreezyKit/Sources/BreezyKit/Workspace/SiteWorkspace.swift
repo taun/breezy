@@ -87,8 +87,44 @@ public final class SiteWorkspace {
     public var slugs: Set<String> { Set(nodes.keys) }
     public var types: [String] { Array(Set(nodes.values.map(\.type))).sorted() }
 
-    public var sortedNodes: [NodeFile] {
-        nodes.values.sorted { ($0.date?.iso ?? "") != ($1.date?.iso ?? "") ? ($0.date?.iso ?? "") > ($1.date?.iso ?? "") : $0.title < $1.title }
+    public var sortedNodes: [NodeFile] { sortedNodes(by: .date, draftsFirst: false) }
+
+    /// When a node last changed: its latest commit on GitHub, or later if it was edited or committed on this device.
+    public func lastUpdated(_ slug: String) -> Date? {
+        let path = Self.path(slug)
+        var dates = [state.fileDates?[path], store.workingDate(slug: slug, branch: branch)].compactMap { $0 }
+        dates += queue.filter { $0.changes.contains { $0.path == path } }.map(\.date)
+        return dates.max()
+    }
+
+    /// The nodes in list order. With `draftsFirst`, drafts come before everything else, each group in `sort` order.
+    public func sortedNodes(by sort: NodeSort, draftsFirst: Bool) -> [NodeFile] {
+        let updated = sort == .updated ? Dictionary(uniqueKeysWithValues: nodes.keys.map { ($0, lastUpdated($0)) }) : [:]
+        func dateOrder(_ a: NodeFile, _ b: NodeFile) -> Bool? {
+            let x = a.date?.iso ?? "", y = b.date?.iso ?? ""
+            return x == y ? nil : x > y
+        }
+        func titleOrder(_ a: NodeFile, _ b: NodeFile) -> Bool {
+            let c = a.title.localizedStandardCompare(b.title)
+            return c == .orderedSame ? a.slug < b.slug : c == .orderedAscending
+        }
+        return nodes.values.sorted { a, b in
+            if draftsFirst, a.draft != b.draft { return a.draft }
+            switch sort {
+            case .title:
+                return titleOrder(a, b)
+            case .date:
+                return dateOrder(a, b) ?? titleOrder(a, b)
+            case .updated:
+                // Newest first; nodes with no known date last.
+                switch (updated[a.slug] ?? nil, updated[b.slug] ?? nil) {
+                case let (x?, y?) where x != y: return x > y
+                case (_?, nil): return true
+                case (nil, _?): return false
+                default: return dateOrder(a, b) ?? titleOrder(a, b)
+                }
+            }
+        }
     }
 
     public func issues(for slug: String) -> [ValidationIssue] {
@@ -249,6 +285,7 @@ public final class SiteWorkspace {
                 if let content = c.content { base.files[c.path] = try store.storeObject(content) } else { base.files[c.path] = nil }
             }
             base.commit = newHead
+            for c in next.changes { state.fileDates = (state.fileDates ?? [:]).merging([c.path: .now]) { $1 } }
             state.base = base
             queue.removeFirst()
             // Queue first: if the app stops between the two writes, a commit is never pushed twice.
@@ -256,10 +293,30 @@ public final class SiteWorkspace {
             try store.saveBranchState(state)
             pushed += 1
         }
+        await fillMissingFileDates(client: client)
         state.fetchedAt = .now
         try store.saveBranchState(state)
         try rebuild()
         return .synced(pushed: pushed)
+    }
+
+    /// Fetches the last-commit date of every node file that has none yet (all of them after a download). Best effort:
+    /// a file whose date cannot be fetched now is tried again at the next sync. Eight requests at a time.
+    func fillMissingFileDates(client: GitHubClient) async {
+        let missing = state.base.files.keys.filter { state.fileDates?[$0] == nil }.sorted()
+        guard !missing.isEmpty else { return }
+        var found: [String: Date] = [:]
+        var index = 0
+        while index < missing.count {
+            let chunk = missing[index..<min(index + 8, missing.count)]
+            index += chunk.count
+            let ref = branch
+            await withTaskGroup(of: (String, Date?).self) { group in
+                for path in chunk { group.addTask { (path, try? await client.lastCommitDate(path: path, ref: ref)) } }
+                for await (path, date) in group { if let date { found[path] = date } }
+            }
+        }
+        state.fileDates = (state.fileDates ?? [:]).merging(found) { $1 }
     }
 
     /// Paths GitHub changed since the base that were also changed here (queued, edited or deleted).
@@ -278,6 +335,8 @@ public final class SiteWorkspace {
 
     /// Makes GitHub's snapshot the new base. Local queued and working changes stay on top of it.
     private func adopt(_ remote: Snapshot) throws {
+        // Files GitHub changed get their dates fetched again at the end of this sync.
+        for (path, sha) in remote.files where state.base.files[path] != sha { state.fileDates?[path] = nil }
         state.base = remote
         state.pendingRemote = nil
         state.conflicts = []
@@ -355,6 +414,7 @@ public final class SiteWorkspace {
         guard queue.isEmpty else { throw WorkspaceError.queuedCommits }
         guard store.branchState(named: name) == nil else { throw WorkspaceError.branchExists(name) }
         var newState = BranchState(branch: name, base: state.base, existsOnRemote: false, fetchedAt: state.fetchedAt)
+        newState.fileDates = state.fileDates
         newState.deleted = state.deleted
         try store.saveBranchState(newState)
         for (slug, text) in store.working(branch) {

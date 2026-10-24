@@ -65,6 +65,9 @@ public struct BranchState: Codable, Equatable, Sendable {
     /// When a sync found the branch gone from GitHub (published and deleted on another device, or deleted on
     /// github.com) while this copy still had local changes. Optional so older state files still decode.
     public var deletedOnGitHubAt: Date?
+    /// When each node file (by path) was last changed on GitHub: its latest commit date. Filled in by sync for any
+    /// file without one; dropped for files GitHub changes so they are fetched again. Optional for older state files.
+    public var fileDates: [String: Date]?
 
     public init(branch: String, base: Snapshot, existsOnRemote: Bool, fetchedAt: Date? = nil) {
         self.branch = branch
