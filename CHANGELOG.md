@@ -7,12 +7,14 @@ All notable changes to Breezy are documented here. The format follows [Keep a Ch
 ### Added
 
 - **View › Show/Hide Sidebar** (⌃⌘S) on the Mac and with an iPad keyboard.
+- **Offline status shows waiting commits:** "Offline · 2 to push" (on iPhone, the offline icon with a count), so it is clear work is saved and will go up when the connection returns.
 - **Progress for slow operations:** a banner at the bottom of the window (and of open sheets) says what Breezy is doing — downloading a branch, syncing, publishing, opening or merging a pull request — with a progress bar and file count while files download. The first download shows the same progress full screen.
 
 ### Fixed
 
 - **iPhone:** tapping a node did nothing on iOS 27, so nodes could not be opened for editing. Tapping a node now always opens it, and going back returns to the list.
 - **iPhone:** the Commit button could be hidden in the system's overflow menu when the top bar was full. It is now a prominent "Commit N Changes" button at the bottom of the node list.
+- The suggested commit message called new and deleted nodes "Edit". It now reads like "Add new-talk; Edit bowery; Delete a-theory".
 - A branch created in Breezy was briefly labeled "deleted on GitHub" in the branch menus until the next sync.
 - **A branch published and deleted on another device** no longer leaves this device stuck on "Sync failed". If the copy here has nothing unpushed, Breezy removes it and switches to `main`. If it has edits or commits, Breezy keeps them and offers to recreate the branch on GitHub (recommended) or to move the changes to a new branch from `main`, with conflicts settled file by file. Other devices' copies of deleted branches without local changes are cleaned up automatically. Copies with local changes are marked "deleted on GitHub" in the branch menus.
 - Hiding the node list with no node selected could relaunch into an empty window with no visible way back. With nothing selected, the list is now always shown.

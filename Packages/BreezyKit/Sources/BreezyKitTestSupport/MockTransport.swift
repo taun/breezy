@@ -7,6 +7,13 @@ public final class MockTransport: HTTPTransport, @unchecked Sendable {
 
     private let lock = NSLock()
     private var routes: [String: ([String: Any]?) -> (Int, Any)] = [:]
+    /// While true, every request fails the way it does with no network (URLError.notConnectedToInternet).
+    public var isOffline: Bool {
+        get { lock.withLock { offline } }
+        set { lock.withLock { offline = newValue } }
+    }
+    private var offline = false
+
     public private(set) var requests: [(key: String, body: [String: Any]?)] = []
 
     public func on(_ key: String, status: Int = 200, _ json: Any) { lock.withLock { routes[key] = { _ in (status, json) } } }
@@ -21,10 +28,11 @@ public final class MockTransport: HTTPTransport, @unchecked Sendable {
         let path = full.replacingOccurrences(of: "https://api.github.com/repos/o/r", with: "")
         let key = "\(request.httpMethod!) \(path)"
         let body = request.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
-        let handler = lock.withLock {
+        let (handler, isOffline) = lock.withLock {
             requests.append((key, body))
-            return routes[key]
+            return (routes[key], offline)
         }
+        if isOffline { throw URLError(.notConnectedToInternet) }
         guard let (status, json) = handler?(body) else {
             return (Data(#"{"message":"no route \#(key)"}"#.utf8), HTTPURLResponse(url: request.url!, statusCode: 404, httpVersion: nil, headerFields: nil)!)
         }

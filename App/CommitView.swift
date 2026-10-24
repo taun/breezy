@@ -44,10 +44,7 @@ struct CommitView: View {
                 }
             }
             .onAppear {
-                if message.isEmpty {
-                    let names = ws.changes.map { (($0.path as NSString).lastPathComponent as NSString).deletingPathExtension }
-                    message = "Edit " + names.prefix(3).joined(separator: ", ") + (names.count > 3 ? " and \(names.count - 3) more" : "")
-                }
+                if message.isEmpty { message = ws.suggestedCommitMessage }
             }
         }
     }

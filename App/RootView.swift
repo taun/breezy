@@ -215,6 +215,14 @@ struct RootView: View {
 /// Shows offline / pending / conflicts / synced; tapping syncs now, or opens the conflicts.
 struct SyncStatusButton: View {
     @Environment(AppModel.self) private var model
+
+    /// Commits waiting to be pushed, shown as a badge on the compact (icon-only) status.
+    private var waiting: Int {
+        switch model.syncStatus {
+        case let .offline(n), let .pending(n): n
+        default: 0
+        }
+    }
     /// Icon only (narrow iPhone bars); the text is still read by VoiceOver.
     var compact = false
 
@@ -232,7 +240,14 @@ struct SyncStatusButton: View {
                 ProgressView().controlSize(.small)
             } else {
                 if compact {
-                    Label(text, systemImage: icon).foregroundStyle(color).labelStyle(.iconOnly)
+                    // Icon plus a count of waiting commits; iOS toolbars drop overlays on a Label, so this is a plain HStack.
+                    HStack(spacing: 2) {
+                        Image(systemName: icon)
+                        if waiting > 0 { Text("\(waiting)").font(.caption.bold().monospacedDigit()) }
+                    }
+                    .foregroundStyle(color)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(text)
                 } else {
                     Label(text, systemImage: icon).foregroundStyle(color).labelStyle(.titleAndIcon)
                 }
@@ -244,7 +259,7 @@ struct SyncStatusButton: View {
 
     private func describe(_ s: AppModel.SyncStatus) -> (String, String, Color) {
         switch s {
-        case .offline: ("Offline", "wifi.slash", .secondary)
+        case let .offline(n): (n == 0 ? "Offline" : "Offline · \(n) to push", "wifi.slash", .secondary)
         case .noToken: ("No GitHub token", "key.slash", .orange)
         case .branchDeleted: ("Deleted on GitHub", "exclamationmark.triangle.fill", .orange)
         case .syncing: ("Syncing", "arrow.triangle.2.circlepath", .secondary)
@@ -255,3 +270,4 @@ struct SyncStatusButton: View {
         }
     }
 }
+

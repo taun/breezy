@@ -113,6 +113,21 @@ public final class SiteWorkspace {
     /// Anything here that is not on GitHub: uncommitted edits or queued commits.
     public var hasLocalChanges: Bool { hasChanges || !queue.isEmpty }
 
+    /// A default commit message naming what the uncommitted changes do, e.g. "Add new-talk; Edit bowery; Delete a-theory".
+    /// Each group lists up to three nodes, then "and N more".
+    public var suggestedCommitMessage: String {
+        var added: [String] = [], edited: [String] = [], deleted: [String] = []
+        for c in changes {
+            let slug = Self.slug(c.path)
+            if c.content == nil { deleted.append(slug) } else if committedText[slug] == nil { added.append(slug) } else { edited.append(slug) }
+        }
+        func part(_ verb: String, _ slugs: [String]) -> String? {
+            guard !slugs.isEmpty else { return nil }
+            return "\(verb) " + slugs.prefix(3).joined(separator: ", ") + (slugs.count > 3 ? " and \(slugs.count - 3) more" : "")
+        }
+        return [part("Add", added), part("Edit", edited), part("Delete", deleted)].compactMap { $0 }.joined(separator: "; ")
+    }
+
     /// The branch was found deleted on GitHub while this copy had local changes; see `recreateOnGitHub` and `moveEdits`.
     public var isDeletedOnGitHub: Bool { state.deletedOnGitHubAt != nil }
     public func isModified(_ slug: String) -> Bool { committedText[slug] != nodes[slug]?.rendered() }

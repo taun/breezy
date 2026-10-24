@@ -134,3 +134,31 @@ struct Harness {
         #expect(CompactNavigation.restored("sidebar", hasSelection: true) == "sidebar")
     }
 }
+
+@MainActor @Suite struct OfflineTests {
+    /// Offline: the app keeps working from the local copy, commits wait, and they are pushed when back online.
+    @Test func offlineCommitsWaitAndPushWhenBackOnline() async throws {
+        let h = Harness()
+        await h.connect()
+        h.github.isOffline = true
+        await h.model.sync()
+        #expect(!h.model.isOnline)
+        #expect(h.model.syncStatus == .offline(pending: 0))
+        #expect(h.model.errorMessage == nil) // being offline is not an error
+
+        try h.model.workspace?.update("a") { try $0.setTitle("Written on a plane") }
+        await h.model.commit(message: "Plane edit")
+        #expect(h.model.workspace?.queue.count == 1)
+        #expect(h.model.syncStatus == .offline(pending: 1)) // the waiting commit is visible while offline
+        #expect(h.github.count("POST /git/commits") == 0)
+
+        // Back online: sync pushes the waiting commit.
+        h.github.isOffline = false
+        h.github.acceptCommits()
+        h.model.setOnlineForTesting(true)
+        await h.model.sync()
+        #expect(h.model.workspace?.queue.isEmpty == true)
+        #expect(h.github.bodies("POST /git/commits").map { $0["message"] as? String } == ["Plane edit"])
+        #expect(h.model.syncStatus == .synced)
+    }
+}

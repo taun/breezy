@@ -14,6 +14,7 @@
 #                         downloads from GitHub for real. The token goes straight from the Keychain to the app's
 #                         environment and is never printed or written to a file.
 #        BREEZY_FRESH=1   uninstall first, so the app starts with no local copy and no saved UI state
+#        BREEZY_OFFLINE=1 debug builds: every GitHub request fails as with no network (tests offline behavior)
 set -eu
 cd "$(dirname "$0")/.."
 SITE="${BREEZY_SITE_DIR:-../taun.github.io}"
@@ -64,6 +65,7 @@ if [ "${BREEZY_SANDBOX:-0}" = 1 ]; then
   TOKEN="$(security find-generic-password -s taun-io-sandbox-token -w 2>/dev/null)" \
     || { echo "No 'taun-io-sandbox-token' in the Keychain"; exit 1; }
   SIMCTL_CHILD_BREEZY_TEST_TOKEN="$TOKEN" SIMCTL_CHILD_BREEZY_TEST_REPO="${BREEZY_SANDBOX_REPO:-taun/taun-io-sandbox}" \
+    SIMCTL_CHILD_BREEZY_TEST_OFFLINE="${BREEZY_OFFLINE:-0}" \
     xcrun simctl launch "$UDID" org.taun.Breezy >/dev/null
   unset TOKEN
   echo "Launched against ${BREEZY_SANDBOX_REPO:-taun/taun-io-sandbox}"

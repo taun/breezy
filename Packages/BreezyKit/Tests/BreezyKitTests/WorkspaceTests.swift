@@ -256,3 +256,17 @@ func client(_ m: MockTransport) -> GitHubClient { GitHubClient(repo: RepoRef(own
         #expect(m.count("GET /git/blobs/ba") == 0)
     }
 }
+
+@MainActor @Suite struct CommitMessageTests {
+    /// Regression: the suggested message called every change "Edit", including new and deleted nodes.
+    @Test func suggestedMessageNamesAddsEditsAndDeletes() async throws {
+        let ws = try await SiteWorkspace.download("main", client: client(.site()), store: tempStore())
+        #expect(ws.suggestedCommitMessage == "")
+        try ws.createNode(slug: "new-one", title: "New", type: "talk")
+        try ws.update("a") { try $0.setTitle("A2") }
+        try ws.deleteNode("b")
+        #expect(ws.suggestedCommitMessage == "Add new-one; Edit a; Delete b")
+        for i in 1...4 { try ws.createNode(slug: "n\(i)", title: "N\(i)", type: "post") }
+        #expect(ws.suggestedCommitMessage.hasPrefix("Add n1, n2, n3 and 2 more; Edit a; Delete b"))
+    }
+}

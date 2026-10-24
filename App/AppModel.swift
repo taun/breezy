@@ -70,8 +70,8 @@ final class AppModel {
     init(tokens: TokenStore = KeychainTokenStore(), defaults: UserDefaults = .standard,
          transport: HTTPTransport = URLSessionTransport(), storeFor: @escaping (RepoRef) -> LocalStore = LocalStore.standard(for:)) {
         var tokens = tokens
+        var transport = transport
         self.defaults = defaults
-        self.transport = transport
         self.storeFor = storeFor
         repoString = defaults.string(forKey: Self.repoKey) ?? "taun/taun.github.io"
         #if DEBUG
@@ -82,7 +82,10 @@ final class AppModel {
             tokens = MemoryTokenStore(token)
             repoString = repo
         }
+        // BREEZY_TEST_OFFLINE=1: every GitHub request fails as with no network, to exercise the offline paths.
+        if env["BREEZY_TEST_OFFLINE"] == "1" { transport = OfflineTransport() }
         #endif
+        self.transport = transport
         self.tokens = tokens
         hasToken = tokens.load() != nil
         updateTokenSync()
@@ -113,20 +116,31 @@ final class AppModel {
     }
 
     enum SyncStatus: Equatable {
-        case offline, syncing, conflicts(Int), branchDeleted, noToken, pending(Int), failed, synced
+        /// `pending`: commits waiting on this device to be pushed when the connection returns.
+        case offline(pending: Int), syncing, conflicts(Int), branchDeleted, noToken, pending(Int), failed, synced
     }
 
     var syncStatus: SyncStatus {
-        guard let ws = workspace else { return isOnline ? .synced : .offline }
+        guard let ws = workspace else { return isOnline ? .synced : .offline(pending: 0) }
         if isBusy || ws.isSyncing { return .syncing }
         if !ws.conflicts.isEmpty { return .conflicts(ws.conflicts.count) }
         if ws.isDeletedOnGitHub { return .branchDeleted }
         if !hasToken { return .noToken }
-        if !isOnline { return .offline }
+        if !isOnline { return .offline(pending: ws.queue.count) }
         if lastSyncError != nil { return .failed }
         if !ws.queue.isEmpty || !ws.state.existsOnRemote { return .pending(ws.queue.count) }
         return .synced
     }
+
+    #if DEBUG
+    /// Fails every request as if the device had no network (debug runs with BREEZY_TEST_OFFLINE=1).
+    private struct OfflineTransport: HTTPTransport {
+        func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) { throw URLError(.notConnectedToInternet) }
+    }
+
+    /// Tests have no network monitor; this stands in for it reporting a connection again.
+    func setOnlineForTesting(_ online: Bool) { isOnline = online }
+    #endif
 
     // MARK: Start-up
 

@@ -51,7 +51,7 @@ Real flows (download, commit, conflicts, Publish, a branch deleted elsewhere) ar
 BREEZY_FRESH=1 BREEZY_SANDBOX=1 scripts/simulator.sh "iPhone 15 Pro"
 ```
 
-`BREEZY_SANDBOX=1` makes a debug build use the sandbox with a fine-grained token stored in the Mac Keychain as `taun-io-sandbox-token` (`security add-generic-password -s taun-io-sandbox-token -a "$USER" -w`). The token goes straight from the Keychain into the app's environment and is kept in memory only. Release builds ignore it. `BREEZY_FRESH=1` starts from a clean install. With the XcodeBuildMCP server available, Claude Code can then tap through the app.
+`BREEZY_SANDBOX=1` makes a debug build use the sandbox with a fine-grained token stored in the Mac Keychain as `taun-io-sandbox-token` (`security add-generic-password -s taun-io-sandbox-token -a "$USER" -w`). The token goes straight from the Keychain into the app's environment and is kept in memory only. Release builds ignore it. `BREEZY_FRESH=1` starts from a clean install, and `BREEZY_OFFLINE=1` makes every GitHub request fail as if there were no network, to test offline behavior. With the XcodeBuildMCP server available, Claude Code can then tap through the app.
 
 ## Where things are
 
