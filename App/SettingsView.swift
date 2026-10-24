@@ -1,3 +1,4 @@
+import BreezyKit
 import SwiftUI
 
 struct SettingsView: View {
@@ -73,6 +74,13 @@ struct SettingsView: View {
                     Text("Every branch you open is kept here so Breezy works offline. Edit through Breezy; changing files directly can confuse syncing.")
                     #endif
                 }
+            }
+            Section {
+                Text(AppVersion.current)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .listRowBackground(Color.clear)
             }
         }
         .formStyle(.grouped)
