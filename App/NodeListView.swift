@@ -18,19 +18,21 @@ struct NodeListView: View {
     private var sort: NodeSort { NodeSort(rawValue: sortRaw) ?? .updated }
 
     private var typeFilter: String? { typeRaw.isEmpty ? nil : typeRaw }
+    /// Issue #3: which states to show.
+    @AppStorage("list.show") private var showRaw = NodeShowFilter.all.rawValue
+    private var show: NodeShowFilter { NodeShowFilter(rawValue: showRaw) ?? .all }
+    /// The list is narrowed by something other than search (the filter icon fills in).
+    private var isFiltered: Bool { typeFilter != nil || show != .all }
 
     private var visible: [NodeFile] {
-        let q = search.trimmingCharacters(in: .whitespaces).lowercased()
-        return workspace.sortedNodes(by: sort, draftsFirst: draftsFirst).filter { n in
-            (typeFilter == nil || n.type == typeFilter)
-                && (q.isEmpty || n.title.lowercased().contains(q) || n.slug.contains(q) || n.tags.contains { $0.lowercased().contains(q) })
-        }
+        workspace.visibleNodes(search: search, type: typeFilter, show: show, sort: sort, draftsFirst: draftsFirst)
     }
 
     var body: some View {
         List(selection: $selection) {
             ForEach(visible, id: \.slug) { node in
-                NodeRow(node: node, modified: workspace.isModified(node.slug), hasIssues: !workspace.issues(for: node.slug).isEmpty,
+                NodeRow(node: node, state: workspace.state(of: node.slug), modified: workspace.isModified(node.slug),
+                        hasIssues: !workspace.issues(for: node.slug).isEmpty,
                         updated: sort == .updated ? workspace.lastUpdated(node.slug) : nil)
                     .tag(node.slug)
                     .contextMenu {
@@ -53,12 +55,19 @@ struct NodeListView: View {
                     .pickerStyle(.inline)
                     Toggle("Drafts First", isOn: $draftsFirst)
                     Divider()
+                    Picker("Show", selection: Binding(get: { show }, set: { showRaw = $0.rawValue })) {
+                        ForEach(NodeShowFilter.allCases) { f in
+                            if let state = f.state { Label(f.label, systemImage: StateIcon.symbol(state)).tag(f) } else { Text(f.label).tag(f) }
+                        }
+                    }
+                    .pickerStyle(.inline)
+                    Divider()
                     Picker("Type", selection: Binding(get: { typeFilter }, set: { typeRaw = $0 ?? "" })) {
                         Text("All types").tag(String?.none)
                         ForEach(workspace.types, id: \.self) { Text($0).tag(String?.some($0)) }
                     }
                 } label: {
-                    Label("Filter", systemImage: typeFilter == nil ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
+                    Label("Filter", systemImage: isFiltered ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
                 }
             }
             ToolbarItem { Button { showNew = true } label: { Label("New Node", systemImage: "plus") } }
@@ -67,6 +76,12 @@ struct NodeListView: View {
             NavigationStack { NewNodeView(workspace: workspace, selection: $selection) }.macSheetFrame(minWidth: 420, minHeight: 320)
         }
         .refreshable { await model.sync() }
+        .overlay {
+            if visible.isEmpty && (isFiltered || !search.isEmpty) {
+                ContentUnavailableView(emptyTitle, systemImage: "line.3.horizontal.decrease.circle",
+                                       description: Text("Change the filter or search to see more nodes."))
+            }
+        }
         .confirmationDialog(
             "Delete “\(workspace.nodes[pendingDelete]?.title ?? pendingDelete)”?",
             isPresented: Binding(get: { workspace.nodes[pendingDelete] != nil }, set: { if !$0 { pendingDelete = "" } }),
@@ -81,6 +96,16 @@ struct NodeListView: View {
         }
     }
 
+    private var emptyTitle: String {
+        if !search.isEmpty { return "No matches" }
+        switch show {
+        case .draft: return "No drafts on \(workspace.branch)"
+        case .publish: return "Nothing to publish on \(workspace.branch)"
+        case .published: return "Nothing published yet"
+        case .all: return "No nodes of this type"
+        }
+    }
+
     private func delete(_ slug: String) {
         if selection == slug { selection = nil }
         do { try workspace.deleteNode(slug) } catch { model.errorMessage = error.localizedDescription }
@@ -89,6 +114,7 @@ struct NodeListView: View {
 
 struct NodeRow: View {
     let node: NodeFile
+    let state: NodeState?
     let modified: Bool
     let hasIssues: Bool
     /// Shown when the list is sorted by last update.
@@ -97,10 +123,10 @@ struct NodeRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
+                if let state { StateIcon(state: state) }
                 Text(node.title).lineLimit(1)
                 if modified { Circle().fill(.orange).frame(width: 7, height: 7).accessibilityLabel("Modified") }
                 if hasIssues { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow).imageScale(.small).accessibilityLabel("Has issues") }
-                if node.draft { Text("draft").font(.caption2).foregroundStyle(.secondary) }
             }
             HStack(spacing: 6) {
                 Text(node.type).font(.caption).padding(.horizontal, 6).background(.quaternary, in: Capsule())

@@ -249,7 +249,7 @@ final class AppModel {
             pruneDeletedBranches(store)
             try store.saveRepoState(repoState)
             if let ws = workspace {
-                switch try await ws.sync(client: client, progress: progress) {
+                switch try await ws.sync(client: client, progress: progress, publishedBranch: repoState.defaultBranch) {
                 case .conflicts: showConflicts = true
                 case .branchDeleted(hasLocalChanges: false): try await leaveDeletedBranch(ws.branch, client: client, store: store)
                 case .branchDeleted(hasLocalChanges: true): showBranchDeleted = true
@@ -291,7 +291,7 @@ final class AppModel {
         try? store.removeBranch(name)
         repoState.lastBranch = main
         try store.saveRepoState(repoState)
-        if case .conflicts = try await next.sync(client: client, progress: progress) { showConflicts = true }
+        if case .conflicts = try await next.sync(client: client, progress: progress, publishedBranch: repoState.defaultBranch) { showConflicts = true }
         errorMessage = "“\(name)” was published or deleted on another device, so Breezy switched to \(main)."
     }
 

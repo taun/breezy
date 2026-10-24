@@ -243,7 +243,9 @@ public final class SiteWorkspace {
 
     /// Creates the branch on GitHub if needed, takes GitHub's newer files, and pushes queued commits in order.
     @discardableResult
-    public func sync(client: GitHubClient, progress: Progress? = nil) async throws -> SyncResult {
+    /// `publishedBranch` is the branch the site is built from (the default branch); its files are recorded so node
+    /// states can be compared with what is live.
+    public func sync(client: GitHubClient, progress: Progress? = nil, publishedBranch: String? = nil) async throws -> SyncResult {
         isSyncing = true
         defer { isSyncing = false }
         if !state.conflicts.isEmpty { return .conflicts(state.conflicts.count) }
@@ -294,10 +296,30 @@ public final class SiteWorkspace {
             pushed += 1
         }
         await fillMissingFileDates(client: client)
+        if let publishedBranch { await refreshPublished(publishedBranch, client: client) }
         state.fetchedAt = .now
         try store.saveBranchState(state)
         try rebuild()
         return .synced(pushed: pushed)
+    }
+
+    /// Records the published branch's node files. On the published branch itself that is the base just synced;
+    /// otherwise its tree is read from GitHub, only when its head moved. Best effort, like the file dates.
+    func refreshPublished(_ publishedBranch: String, client: GitHubClient) async {
+        if publishedBranch == branch {
+            state.publishedCommit = state.base.commit
+            state.publishedFiles = state.base.files
+            return
+        }
+        guard let head = try? await client.headSHA(of: publishedBranch) else { return }
+        guard head != state.publishedCommit || state.publishedFiles == nil else { return }
+        guard let entries = try? await client.tree(ofCommit: head) else { return }
+        state.publishedFiles = Dictionary(uniqueKeysWithValues: entries.filter(Self.isNodeEntry).map { ($0.path, $0.sha) })
+        state.publishedCommit = head
+    }
+
+    static func isNodeEntry(_ e: TreeEntry) -> Bool {
+        e.isBlob && e.path.hasPrefix(nodesDir) && e.path.hasSuffix(".md") && !e.path.dropFirst(nodesDir.count).contains("/")
     }
 
     /// Fetches the last-commit date of every node file that has none yet (all of them after a download). Best effort:

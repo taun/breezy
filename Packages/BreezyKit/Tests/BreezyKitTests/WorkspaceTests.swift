@@ -340,3 +340,63 @@ func client(_ m: MockTransport) -> GitHubClient { GitHubClient(repo: RepoRef(own
         #expect(GitHubClient.escapeQuery("feature/a b&c") == "feature/a%20b%26c")
     }
 }
+
+/// Issue #3: draft / publish / published, and the Show filter.
+@MainActor @Suite struct NodeStateTests {
+    @Test func onThePublishedBranchSyncedNodesArePublishedAndEditsArePublish() async throws {
+        let m = MockTransport.site()
+        let ws = try await SiteWorkspace.download("main", client: client(m), store: tempStore())
+        _ = try await ws.sync(client: client(m), publishedBranch: "main")
+        #expect(ws.state(of: "a") == .published)
+        try ws.update("a") { try $0.setTitle("Changed") }
+        #expect(ws.state(of: "a") == .publish)
+        try ws.commit(message: "Queued, not pushed")
+        #expect(ws.state(of: "a") == .publish) // committed on the device is not live yet
+        try ws.createNode(slug: "new-one", title: "New", type: "post")
+        #expect(ws.state(of: "new-one") == .publish)
+        try ws.update("b") { try $0.setDraft(true) }
+        #expect(ws.state(of: "b") == .draft) // draft wins even though b changed
+    }
+
+    @Test func onABranchStatesCompareWithThePublishedBranch() async throws {
+        let m = MockTransport.site()
+        // "edit" has a changed a; main (published) still has the original files.
+        let changedA = "---\ntitle: \"A on edit\"\ntype: person\nlinks: [b]\n---\n\nBody A\n"
+        let shaA = GitBlob.sha(of: changedA)
+        m.on("GET /git/blobs/\(shaA)", ["content": Data(changedA.utf8).base64EncodedString()])
+        m.on("GET /git/ref/heads/edit", ["object": ["sha": "e1"]])
+        m.on("GET /git/commits/e1", ["sha": "e1", "tree": ["sha": "te1"]])
+        m.on("GET /git/trees/te1?recursive=1", ["tree": [
+            ["path": "src/nodes/a.md", "type": "blob", "sha": shaA],
+            ["path": "src/nodes/b.md", "type": "blob", "sha": "bb"],
+        ]])
+        let ws = try await SiteWorkspace.download("edit", client: client(m), store: tempStore())
+        #expect(ws.state(of: "b") == .publish) // nothing known about main yet: not claimed as published
+        _ = try await ws.sync(client: client(m), publishedBranch: "main")
+        #expect(ws.state.publishedCommit == "c1")
+        #expect(ws.state(of: "a") == .publish)
+        #expect(ws.state(of: "b") == .published)
+        // main does not move: the next sync does not read its tree again.
+        let reads = m.count("GET /git/trees/t1?recursive=1")
+        _ = try await ws.sync(client: client(m), publishedBranch: "main")
+        #expect(m.count("GET /git/trees/t1?recursive=1") == reads)
+    }
+
+    @Test func showFilterCombinesWithTypeAndSearch() async throws {
+        let m = MockTransport.site()
+        let ws = try await SiteWorkspace.download("main", client: client(m), store: tempStore())
+        _ = try await ws.sync(client: client(m), publishedBranch: "main")
+        try ws.createNode(slug: "draft-talk", title: "Draft Talk", type: "talk")
+        try ws.update("draft-talk") { try $0.setDraft(true) }
+        try ws.createNode(slug: "new-talk", title: "New Talk", type: "talk")
+        func slugs(_ show: NodeShowFilter, type: String? = nil, search: String = "") -> [String] {
+            ws.visibleNodes(search: search, type: type, show: show, sort: .title, draftsFirst: false).map(\.slug)
+        }
+        #expect(slugs(.all) == ["a", "b", "draft-talk", "new-talk"])
+        #expect(slugs(.draft) == ["draft-talk"])
+        #expect(slugs(.publish) == ["new-talk"])
+        #expect(slugs(.published) == ["a", "b"])
+        #expect(slugs(.publish, type: "person") == [])
+        #expect(slugs(.all, type: "talk", search: "new") == ["new-talk"])
+    }
+}

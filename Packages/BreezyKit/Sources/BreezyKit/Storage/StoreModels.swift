@@ -68,6 +68,10 @@ public struct BranchState: Codable, Equatable, Sendable {
     /// When each node file (by path) was last changed on GitHub: its latest commit date. Filled in by sync for any
     /// file without one; dropped for files GitHub changes so they are fetched again. Optional for older state files.
     public var fileDates: [String: Date]?
+    /// The published branch (the default branch, e.g. main) as last seen: its head commit and node file path -> blob
+    /// sha. Compared with this branch's nodes to tell Publish from Published (issue #3). Optional for older files.
+    public var publishedCommit: String?
+    public var publishedFiles: [String: String]?
 
     public init(branch: String, base: Snapshot, existsOnRemote: Bool, fetchedAt: Date? = nil) {
         self.branch = branch
