@@ -24,7 +24,7 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: main
           fetch-depth: 0
@@ -69,7 +69,7 @@ jobs:
           fi
           git log --oneline origin/main..HEAD
           git format-patch --stdout origin/main..HEAD > change.patch
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: change
           path: change.patch
@@ -82,10 +82,10 @@ jobs:
     outputs:
       sha: ${{ steps.push.outputs.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: main
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: change
           path: ${{ runner.temp }}
