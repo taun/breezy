@@ -8,12 +8,14 @@ public struct ValidationIssue: Equatable, Sendable {
 
 public enum Validator {
     /// Checks one node against the set of all node slugs (the content model's build-time rules).
-    public static func validate(_ node: NodeFile, allSlugs: Set<String>) -> [ValidationIssue] {
+    public static func validate(_ node: NodeFile, allSlugs: Set<String>, deletedSlugs: Set<String> = []) -> [ValidationIssue] {
         var issues: [ValidationIssue] = []
         if node.title.isEmpty || node.title == node.slug { issues.append(.init(severity: .warning, message: "No title; the slug is used.")) }
         if node.type.isEmpty { issues.append(.init(severity: .error, message: "type is empty.")) }
         for l in node.links where !allSlugs.contains(l.to) {
-            issues.append(.init(severity: .warning, message: "Links to unknown node \"\(l.to)\"; the build drops it."))
+            issues.append(.init(severity: .warning, message: deletedSlugs.contains(l.to)
+                ? "Links to deleted node \"\(l.to)\"; undelete it or remove the link."
+                : "Links to unknown node \"\(l.to)\"; the build drops it."))
         }
         for w in node.linkWarnings { issues.append(.init(severity: .warning, message: w)) }
         return issues

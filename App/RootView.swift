@@ -62,6 +62,8 @@ struct RootView: View {
                 } detail: {
                     if let slug = selection.wrappedValue, ws.nodes[slug] != nil {
                         NodeEditorView(workspace: ws, slug: slug).id(slug)
+                    } else if let slug = selection.wrappedValue, ws.deletedNodes[slug] != nil {
+                        DeletedNodeView(workspace: ws, slug: slug).id(slug)
                     } else {
                         ContentUnavailableView("No node selected", systemImage: "doc.text", description: Text("Choose a node, or add one with +."))
                     }

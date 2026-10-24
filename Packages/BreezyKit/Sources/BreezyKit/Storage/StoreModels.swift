@@ -72,6 +72,9 @@ public struct BranchState: Codable, Equatable, Sendable {
     /// sha. Compared with this branch's nodes to tell Publish from Published (issue #3). Optional for older files.
     public var publishedCommit: String?
     public var publishedFiles: [String: String]?
+    /// Node paths deleted by commits made here, kept until the deletion reaches the published branch (or the node is
+    /// restored) so the list can still show them and offer Undelete. Optional for older state files.
+    public var pendingDeletions: [String]?
 
     public init(branch: String, base: Snapshot, existsOnRemote: Bool, fetchedAt: Date? = nil) {
         self.branch = branch

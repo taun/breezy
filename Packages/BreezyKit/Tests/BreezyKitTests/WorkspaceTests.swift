@@ -154,7 +154,7 @@ func client(_ m: MockTransport) -> GitHubClient { GitHubClient(repo: RepoRef(own
         try ws.revert("a")
         #expect(!ws.hasChanges)
         try ws.deleteNode("b")
-        #expect(ws.issues(for: "a").contains { $0.message.contains("unknown node \"b\"") })
+        #expect(ws.issues(for: "a").contains { $0.message.contains("deleted node \"b\"") }) // a link to a node deleted here
         #expect(throws: WorkspaceError.self) { try ws.createNode(slug: "a", title: "dup", type: "x") }
     }
 }
@@ -398,5 +398,83 @@ func client(_ m: MockTransport) -> GitHubClient { GitHubClient(repo: RepoRef(own
         #expect(slugs(.published) == ["a", "b"])
         #expect(slugs(.publish, type: "person") == [])
         #expect(slugs(.all, type: "talk", search: "new") == ["new-talk"])
+    }
+}
+
+/// Issue #3, part 2: deleted nodes stay listed until the deletion is published; undelete; links to deleted nodes.
+@MainActor @Suite struct DeletedNodeTests {
+    /// main at c1 with a (links to b) and b, synced as the published branch.
+    func mainWorkspace() async throws -> (SiteWorkspace, MockTransport) {
+        let m = MockTransport.site()
+        let ws = try await SiteWorkspace.download("main", client: client(m), store: tempStore())
+        _ = try await ws.sync(client: client(m), publishedBranch: "main")
+        return (ws, m)
+    }
+
+    @Test func uncommittedDeletionIsListedAndUndeleteCancelsIt() async throws {
+        let (ws, _) = try await mainWorkspace()
+        try ws.deleteNode("b")
+        #expect(ws.nodes["b"] == nil)
+        #expect(ws.state(of: "b") == .deleted)
+        #expect(ws.visibleNodes(sort: .title, draftsFirst: false).map(\.slug) == ["a", "b"]) // still in the list
+        #expect(ws.visibleNodes(show: .publish, sort: .title, draftsFirst: false).map(\.slug) == ["b"])
+        try ws.undelete("b")
+        #expect(ws.state(of: "b") == .published)
+        #expect(!ws.hasChanges)
+    }
+
+    @Test func committedDeletionStaysUntilPublishedAndCanBeUndeleted() async throws {
+        let (ws, m) = try await mainWorkspace()
+        try ws.deleteNode("b")
+        try ws.commit(message: "Delete b")
+        #expect(ws.state(of: "b") == .deleted) // queued: main still has b
+        try ws.undelete("b") // re-adds b as an uncommitted change on top of the queued deletion
+        #expect(ws.nodes["b"] != nil && ws.hasChanges)
+        try ws.revert("b") // back to deleted
+        #expect(ws.state(of: "b") == .deleted)
+
+        // Pushed to main (the published branch): the deletion is live, so b leaves the list.
+        m.acceptCommits()
+        _ = try await ws.sync(client: client(m), publishedBranch: "main")
+        #expect(ws.state(of: "b") == nil)
+        #expect(ws.visibleNodes(sort: .title, draftsFirst: false).map(\.slug) == ["a"])
+        #expect(ws.state.pendingDeletions == nil)
+    }
+
+    @Test func deletionOnABranchStaysUntilMainLosesTheFile() async throws {
+        let (main, m) = try await mainWorkspace()
+        _ = main
+        let store = main.store
+        // A branch "edit" at c1, created from main's copy.
+        m.on("POST /git/refs", status: 201, ["ref": "refs/heads/edit"])
+        let ws = try main.branchOff("edit")
+        try ws.deleteNode("b")
+        try ws.commit(message: "Delete b on edit")
+        m.on("GET /git/ref/heads/edit", ["object": ["sha": "c1"]])
+        m.on("POST /git/trees", ["sha": "t2"])
+        m.on("POST /git/commits", ["sha": "e2"])
+        m.on("GET /git/commits/e2", ["sha": "e2", "tree": ["sha": "t2"]])
+        m.on("PATCH /git/refs/heads/edit", ["object": ["sha": "e2"]])
+        _ = try await ws.sync(client: client(m), publishedBranch: "main")
+        #expect(ws.state(of: "b") == .deleted) // pushed to edit, but main (published) still has b
+        #expect(try SiteWorkspace.open("edit", store: store)?.state(of: "b") == .deleted) // survives relaunch
+        try ws.undelete("b")
+        #expect(ws.nodes["b"]?.title == "B")
+    }
+
+    @Test func linksToDeletedNodesAreFlaggedAndCanBeRemoved() async throws {
+        let (ws, _) = try await mainWorkspace()
+        #expect(ws.incomingLinks(to: "b").map(\.slug) == ["a"])
+        try ws.deleteNode("b")
+        #expect(ws.brokenLinks(of: "a") == [NodeLink(to: "b")])
+        #expect(ws.issues(for: "a").contains { $0.message.contains("deleted node \"b\"") })
+        #expect(ws.visibleNodes(show: .brokenLinks, sort: .title, draftsFirst: false).map(\.slug) == ["a"])
+        try ws.undelete("b")
+        #expect(ws.brokenLinks(of: "a").isEmpty) // undelete clears the flag
+
+        try ws.deleteNode("b", removingIncomingLinks: true)
+        #expect(ws.nodes["a"]?.links.isEmpty == true)
+        #expect(ws.brokenLinks(of: "a").isEmpty)
+        #expect(ws.changes.map(\.path) == ["src/nodes/a.md", "src/nodes/b.md"]) // a edited, b deleted
     }
 }

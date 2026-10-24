@@ -31,15 +31,28 @@ struct NodeListView: View {
     var body: some View {
         List(selection: $selection) {
             ForEach(visible, id: \.slug) { node in
-                NodeRow(node: node, state: workspace.state(of: node.slug), modified: workspace.isModified(node.slug),
-                        hasIssues: !workspace.issues(for: node.slug).isEmpty,
+                let state = workspace.state(of: node.slug)
+                let broken = workspace.brokenLinks(of: node.slug).count
+                NodeRow(node: node, state: state, modified: workspace.isModified(node.slug),
+                        // Links to deleted nodes have their own marker; the warning triangle is for anything else.
+                        hasIssues: workspace.issues(for: node.slug).count > broken, brokenLinks: broken,
                         updated: sort == .updated ? workspace.lastUpdated(node.slug) : nil)
                     .tag(node.slug)
                     .contextMenu {
-                        if workspace.isModified(node.slug) { Button("Revert Changes") { try? workspace.revert(node.slug) } }
-                        Button("Delete", role: .destructive) { pendingDelete = node.slug }
+                        if state == .deleted {
+                            Button("Undelete") { undelete(node.slug) }
+                        } else {
+                            if workspace.isModified(node.slug) { Button("Revert Changes") { try? workspace.revert(node.slug) } }
+                            Button("Delete", role: .destructive) { pendingDelete = node.slug }
+                        }
                     }
-                    .swipeActions { Button("Delete", role: .destructive) { pendingDelete = node.slug } }
+                    .swipeActions {
+                        if state == .deleted {
+                            Button("Undelete") { undelete(node.slug) }.tint(.blue)
+                        } else {
+                            Button("Delete", role: .destructive) { pendingDelete = node.slug }
+                        }
+                    }
             }
         }
         .searchable(text: $search, prompt: "Title, slug or tag")
@@ -57,7 +70,9 @@ struct NodeListView: View {
                     Divider()
                     Picker("Show", selection: Binding(get: { show }, set: { showRaw = $0.rawValue })) {
                         ForEach(NodeShowFilter.allCases) { f in
-                            if let state = f.state { Label(f.label, systemImage: StateIcon.symbol(state)).tag(f) } else { Text(f.label).tag(f) }
+                            if let state = f.state { Label(f.label, systemImage: StateIcon.symbol(state)).tag(f) }
+                            else if f == .brokenLinks { Label(f.label, systemImage: "link").tag(f) }
+                            else { Text(f.label).tag(f) }
                         }
                     }
                     .pickerStyle(.inline)
@@ -87,12 +102,24 @@ struct NodeListView: View {
             isPresented: Binding(get: { workspace.nodes[pendingDelete] != nil }, set: { if !$0 { pendingDelete = "" } }),
             titleVisibility: .visible
         ) {
-            Button("Delete", role: .destructive) {
-                delete(pendingDelete)
+            // Default (first): keep the links, flagged; the user decides node by node. Undelete clears the flags.
+            Button(linkers.isEmpty ? "Delete" : "Delete Only", role: .destructive) {
+                delete(pendingDelete, removingLinks: false)
                 pendingDelete = ""
             }
+            if !linkers.isEmpty {
+                Button("Delete and Remove Links", role: .destructive) {
+                    delete(pendingDelete, removingLinks: true)
+                    pendingDelete = ""
+                }
+            }
         } message: {
-            Text("It is removed from \(workspace.branch) when you commit. Until then you can restore it from the Commit screen.")
+            if linkers.isEmpty {
+                Text("It stays in the list, marked deleted, until the deletion is published. You can undelete it until then.")
+            } else {
+                let names = linkers.prefix(3).map(\.title).joined(separator: ", ") + (linkers.count > 3 ? " and \(linkers.count - 3) more" : "")
+                Text("\(linkers.count) node\(linkers.count == 1 ? " links" : "s link") here: \(names). Delete Only keeps those links and flags them; you can also remove them now. It stays in the list, marked deleted, until the deletion is published.")
+            }
         }
     }
 
@@ -102,13 +129,20 @@ struct NodeListView: View {
         case .draft: return "No drafts on \(workspace.branch)"
         case .publish: return "Nothing to publish on \(workspace.branch)"
         case .published: return "Nothing published yet"
+        case .brokenLinks: return "No links to deleted nodes"
         case .all: return "No nodes of this type"
         }
     }
 
-    private func delete(_ slug: String) {
-        if selection == slug { selection = nil }
-        do { try workspace.deleteNode(slug) } catch { model.errorMessage = error.localizedDescription }
+    /// Nodes that link to the node awaiting delete confirmation.
+    private var linkers: [NodeFile] { pendingDelete.isEmpty ? [] : workspace.incomingLinks(to: pendingDelete) }
+
+    private func delete(_ slug: String, removingLinks: Bool) {
+        do { try workspace.deleteNode(slug, removingIncomingLinks: removingLinks) } catch { model.errorMessage = error.localizedDescription }
+    }
+
+    private func undelete(_ slug: String) {
+        do { try workspace.undelete(slug) } catch { model.errorMessage = error.localizedDescription }
     }
 }
 
@@ -117,6 +151,8 @@ struct NodeRow: View {
     let state: NodeState?
     let modified: Bool
     let hasIssues: Bool
+    /// How many of its links point at deleted nodes.
+    var brokenLinks = 0
     /// Shown when the list is sorted by last update.
     var updated: Date? = nil
 
@@ -125,7 +161,13 @@ struct NodeRow: View {
             HStack(spacing: 6) {
                 if let state { StateIcon(state: state) }
                 Text(node.title).lineLimit(1)
+                    .strikethrough(state == .deleted)
+                    .foregroundStyle(state == .deleted ? .secondary : .primary)
                 if modified { Circle().fill(.orange).frame(width: 7, height: 7).accessibilityLabel("Modified") }
+                if brokenLinks > 0 {
+                    Image(systemName: "link").foregroundStyle(.orange).imageScale(.small)
+                        .accessibilityLabel("Links to \(brokenLinks) deleted node\(brokenLinks == 1 ? "" : "s")")
+                }
                 if hasIssues { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow).imageScale(.small).accessibilityLabel("Has issues") }
             }
             HStack(spacing: 6) {

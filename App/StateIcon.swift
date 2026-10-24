@@ -11,6 +11,7 @@ struct StateIcon: View {
         case .draft: "hammer.fill"
         case .publish: "checkmark.circle.fill"
         case .published: "globe"
+        case .deleted: "trash.fill"
         }
     }
 
@@ -19,6 +20,7 @@ struct StateIcon: View {
         case .draft: Color(red: 0.83, green: 0.63, blue: 0.09) // gold
         case .publish: .green
         case .published: .blue // link blue
+        case .deleted: .red
         }
     }
 
@@ -27,6 +29,7 @@ struct StateIcon: View {
         case .draft: "Draft, will not be published"
         case .publish: "Will be published"
         case .published: "Published"
+        case .deleted: "Deleted, will be removed from the site when published"
         }
     }
 
@@ -46,6 +49,7 @@ extension NodeShowFilter {
         case .draft: .draft
         case .publish: .publish
         case .published: .published
+        case .brokenLinks: nil
         }
     }
 }

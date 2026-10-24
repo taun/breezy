@@ -19,7 +19,9 @@ struct LinkEditorView: View {
                 HStack {
                     Image(systemName: "arrow.right").foregroundStyle(.secondary)
                     Picker("Target", selection: Binding(get: { link.to }, set: { slug in modify(i) { $0.to = slug } })) {
-                        if workspace.nodes[link.to] == nil { Text("\(link.to) (missing)").tag(link.to) }
+                        if workspace.nodes[link.to] == nil {
+                            Text(workspace.deletedNodes[link.to].map { "\($0.title) (deleted)" } ?? "\(link.to) (missing)").tag(link.to)
+                        }
                         ForEach(targets, id: \.slug) { Text($0.title).tag($0.slug) }
                     }
                     .labelsHidden()

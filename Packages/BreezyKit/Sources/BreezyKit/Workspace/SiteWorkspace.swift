@@ -15,6 +15,9 @@ public final class SiteWorkspace {
     public private(set) var queue: [QueuedCommit]
     /// Displayed (possibly edited) nodes by slug.
     public private(set) var nodes: [String: NodeFile] = [:]
+    /// Nodes deleted here whose deletion is not published yet (uncommitted, committed, or on an unmerged branch), with
+    /// their last content. Shown struck through in the list; see `undelete`. Issue #3.
+    public private(set) var deletedNodes: [String: NodeFile] = [:]
     /// base + queue, by slug: what working edits are compared against.
     private var committedText: [String: String] = [:]
     public private(set) var isSyncing = false
@@ -99,7 +102,11 @@ public final class SiteWorkspace {
 
     /// The nodes in list order. With `draftsFirst`, drafts come before everything else, each group in `sort` order.
     public func sortedNodes(by sort: NodeSort, draftsFirst: Bool) -> [NodeFile] {
-        let updated = sort == .updated ? Dictionary(uniqueKeysWithValues: nodes.keys.map { ($0, lastUpdated($0)) }) : [:]
+        ordered(Array(nodes.values), by: sort, draftsFirst: draftsFirst)
+    }
+
+    func ordered(_ list: [NodeFile], by sort: NodeSort, draftsFirst: Bool) -> [NodeFile] {
+        let updated = sort == .updated ? Dictionary(uniqueKeysWithValues: list.map { ($0.slug, lastUpdated($0.slug)) }) : [:]
         func dateOrder(_ a: NodeFile, _ b: NodeFile) -> Bool? {
             let x = a.date?.iso ?? "", y = b.date?.iso ?? ""
             return x == y ? nil : x > y
@@ -108,7 +115,7 @@ public final class SiteWorkspace {
             let c = a.title.localizedStandardCompare(b.title)
             return c == .orderedSame ? a.slug < b.slug : c == .orderedAscending
         }
-        return nodes.values.sorted { a, b in
+        return list.sorted { a, b in
             if draftsFirst, a.draft != b.draft { return a.draft }
             switch sort {
             case .title:
@@ -129,7 +136,7 @@ public final class SiteWorkspace {
 
     public func issues(for slug: String) -> [ValidationIssue] {
         guard let n = nodes[slug] else { return [] }
-        return Validator.validate(n, allSlugs: slugs)
+        return Validator.validate(n, allSlugs: slugs, deletedSlugs: Set(deletedNodes.keys))
     }
 
     /// Uncommitted writes and deletions.
@@ -189,9 +196,38 @@ public final class SiteWorkspace {
         try persist(slug)
     }
 
-    public func deleteNode(_ slug: String) throws {
+    /// Deletes a node. With `removingIncomingLinks`, nodes linking to it also drop those links; otherwise they keep
+    /// them and are flagged (`brokenLinks`) until the node is undeleted or the links are removed.
+    public func deleteNode(_ slug: String, removingIncomingLinks: Bool = false) throws {
+        if removingIncomingLinks {
+            for other in incomingLinks(to: slug) {
+                try update(other.slug) { node in try node.setLinks(node.links.filter { $0.to != slug }) }
+            }
+        }
         nodes[slug] = nil
         try persist(slug)
+    }
+
+    /// Brings back a deleted node: cancels an uncommitted deletion, or re-adds the file (an uncommitted addition)
+    /// when the deletion was already committed.
+    public func undelete(_ slug: String) throws {
+        guard nodes[slug] == nil, let gone = deletedNodes[slug] else { return }
+        if committedText[slug] != nil {
+            try revert(slug)
+        } else {
+            nodes[slug] = gone
+            try persist(slug)
+        }
+    }
+
+    /// Nodes (not deleted) whose links point at `slug`.
+    public func incomingLinks(to slug: String) -> [NodeFile] {
+        nodes.values.filter { $0.slug != slug && $0.links.contains { $0.to == slug } }.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+    }
+
+    /// Links of `slug` that point at deleted nodes.
+    public func brokenLinks(of slug: String) -> [NodeLink] {
+        nodes[slug]?.links.filter { deletedNodes[$0.to] != nil } ?? []
     }
 
     public func revert(_ slug: String) throws {
@@ -213,6 +249,7 @@ public final class SiteWorkspace {
             if deleted { state.deleted.append(slug) } else { state.deleted.removeAll { $0 == slug } }
             try store.saveBranchState(state)
         }
+        try refreshDeleted()
     }
 
     // MARK: Committing (works offline)
@@ -223,6 +260,8 @@ public final class SiteWorkspace {
         guard !pending.isEmpty else { return }
         queue.append(QueuedCommit(message: message, changes: pending))
         try store.saveQueue(queue, for: branch)
+        let deletedPaths = pending.filter { $0.content == nil }.map(\.path)
+        if !deletedPaths.isEmpty { state.pendingDeletions = Array(Set((state.pendingDeletions ?? []) + deletedPaths)).sorted() }
         for c in pending { try store.removeWorking(slug: Self.slug(c.path), branch: branch) }
         state.deleted = []
         try store.saveBranchState(state)
@@ -466,6 +505,30 @@ public final class SiteWorkspace {
         for slug in state.deleted { display[slug] = nil }
         committedText = committed
         nodes = display
+        try refreshDeleted()
+    }
+
+    /// Recomputes `deletedNodes` from uncommitted deletions and committed ones not yet published. Cheap; runs after
+    /// every change so the list and the link flags stay current.
+    private func refreshDeleted() throws {
+        let committed = committedText, display = nodes
+        // Committed deletions stay listed until the published branch no longer has the file (the deletion is live) or
+        // the node exists again.
+        if let pending = state.pendingDeletions {
+            let kept = pending.filter { path in
+                committed[Self.slug(path)] == nil && (state.publishedFiles.map { $0[path] != nil } ?? true)
+            }
+            if kept != pending { state.pendingDeletions = kept.isEmpty ? nil : kept; try store.saveBranchState(state) }
+        }
+        var gone: [String: NodeFile] = [:]
+        for slug in state.deleted {
+            if let text = committed[slug] { gone[slug] = try? NodeFile(slug: slug, text: text) }
+        }
+        for path in state.pendingDeletions ?? [] where display[Self.slug(path)] == nil {
+            let sha = state.base.files[path] ?? state.publishedFiles?[path]
+            if let text = sha.flatMap(store.object) { gone[Self.slug(path)] = try? NodeFile(slug: Self.slug(path), text: text) }
+        }
+        deletedNodes = gone
     }
 
     static func slug(_ path: String) -> String { String(path.dropFirst(nodesDir.count).dropLast(3)) }
