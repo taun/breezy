@@ -58,6 +58,7 @@ scripts/simulator.sh [device]   # build, install in the simulator seeded with th
 - XcodeBuildMCP's `screenshot` can return a stale frame; take screenshots with `xcrun simctl io <udid> screenshot` and use `snapshot_ui` for the element tree.
 - Simulators here: iOS 17.2 (iPhone 15 Pro) and iOS 26.5 (iPhone 17 Pro). Check UI changes on 26.5 too: navigation and toolbar behavior differ between them and from the user's iOS 27 iPhone. No iOS 27 simulator is available; device-only bugs need the user to confirm on the phone.
 - `simctl spawn … defaults write` values persist after uninstalling the app; `BREEZY_FRESH=1` clears them.
+- **CI** (`.github/workflows/`, described in README): Test on every branch and PR; TestFlight on app changes to `main` (`scripts/testflight.sh`, build number = UTC time); Execute issue runs Claude Code on issues labeled `execute` and pushes to `main` when `scripts/test.sh` and `scripts/build.sh` pass. Runners are `macos-26` (Xcode 26.x, older than the dev Mac's), so code must still compile with the iOS 26 SDK: guard newer APIs with `if #available`. When running there, you have no simulator UI, no Keychain token and no sandbox access.
 
 ## Conventions
 

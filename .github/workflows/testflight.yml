@@ -1,0 +1,58 @@
+name: TestFlight
+
+# Uploads a TestFlight build of the iOS app whenever the app changes on main, after the tests pass. Also run by hand
+# (Actions › TestFlight › Run workflow) and by the Execute workflow. Needs the secrets ASC_KEY_ID, ASC_ISSUER_ID and
+# ASC_KEY_P8; without them the upload is skipped with a notice.
+on:
+  push:
+    branches: [main]
+    paths: ["App/**", "Packages/**", "project.yml", "scripts/testflight.sh"]
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
+      skip_tests:
+        type: boolean
+        default: false
+    outputs:
+      build:
+        value: ${{ jobs.upload.outputs.build }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testflight
+  cancel-in-progress: false
+
+jobs:
+  test:
+    if: ${{ !inputs.skip_tests }}
+    uses: ./.github/workflows/test.yml
+
+  upload:
+    needs: test
+    # Also runs when the tests were skipped (the Execute workflow has just run them).
+    if: ${{ !cancelled() && !failure() }}
+    runs-on: macos-26
+    timeout-minutes: 45
+    outputs:
+      build: ${{ steps.upload.outputs.build }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: ./.github/actions/setup
+      - id: upload
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          if [ -z "$ASC_KEY_ID" ]; then
+            echo "::notice::TestFlight upload skipped: the ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_P8 secrets are not set."
+            exit 0
+          fi
+          scripts/testflight.sh

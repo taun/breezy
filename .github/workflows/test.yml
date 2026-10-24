@@ -1,0 +1,21 @@
+name: Test
+
+# Every branch and pull request. Pushes to main are tested by the TestFlight workflow before it uploads.
+on:
+  push:
+    branches-ignore: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: scripts/test.sh
+      - run: scripts/build.sh ios

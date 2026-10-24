@@ -1,0 +1,136 @@
+name: Execute issue
+
+# Adding the "execute" label to an issue has Claude implement it. If the tests pass, the change is pushed straight to
+# main (closing the issue) and a TestFlight build is uploaded; the result is reported on the issue. The issue text is
+# Claude's instructions, so only issues opened and labeled by the repo owner run. Claude's job gets a read-only token:
+# its commits leave the job as a patch, and a separate job pushes them.
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: execute
+  cancel-in-progress: false
+
+jobs:
+  code:
+    if: >-
+      github.event.label.name == 'execute' &&
+      github.event.sender.login == github.repository_owner &&
+      github.event.issue.user.login == github.repository_owner
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - run: |
+          git config user.name "claude[bot]"
+          git config user.email "41898282+claude[bot]@users.noreply.github.com"
+      - name: Claude implements the issue
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          display_report: true
+          claude_args: --max-turns 200 --allowedTools "Bash,Read,Edit,Write,Glob,Grep,WebFetch,WebSearch"
+          prompt: |
+            Implement GitHub issue #${{ github.event.issue.number }} of taun/breezy in this checkout. The site repo is
+            checked out at ../taun.github.io. Your change ships to TestFlight without further review once the tests pass.
+
+            Title: ${{ github.event.issue.title }}
+
+            ${{ github.event.issue.body }}
+
+            Follow CLAUDE.md. In this environment:
+            - There is no simulator UI automation (XcodeBuildMCP), no Keychain token and no access to the sandbox repo.
+              Check your work with scripts/test.sh and scripts/build.sh, and add tests for new logic as CLAUDE.md says.
+            - Add a line under Unreleased in CHANGELOG.md for every user-visible change.
+            - Commit with git on the current branch. End the last commit message with a line
+              "Closes #${{ github.event.issue.number }}", then a blank line and
+              "Co-Authored-By: Claude <noreply@anthropic.com>".
+            - Do not push, open pull requests, or comment on the issue; the workflow does that after the tests pass.
+            - If the issue is unclear, or needs something only the owner can do (accounts, secrets, testing on a
+              device), make no commit and say what is needed in your final message.
+      - name: Test
+        run: scripts/test.sh && scripts/build.sh
+      - name: Package the commits
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then git status --short; echo "::error::Uncommitted changes left behind"; exit 1; fi
+          if [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ]; then echo "::error::Claude made no commit; see the report above"; exit 1; fi
+          if ! git log --format=%B origin/main..HEAD | grep -q "Closes #${{ github.event.issue.number }}"; then
+            echo "::error::No commit says Closes #${{ github.event.issue.number }}"; exit 1
+          fi
+          git log --oneline origin/main..HEAD
+          git format-patch --stdout origin/main..HEAD > change.patch
+      - uses: actions/upload-artifact@v4
+        with:
+          name: change
+          path: change.patch
+
+  push:
+    needs: code
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      sha: ${{ steps.push.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/download-artifact@v4
+        with:
+          name: change
+          path: ${{ runner.temp }}
+      - id: push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git am "$RUNNER_TEMP/change.patch"
+          git push origin HEAD:main
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: push
+    uses: ./.github/workflows/testflight.yml
+    with:
+      ref: ${{ needs.push.outputs.sha }}
+      skip_tests: true
+    secrets: inherit
+
+  report:
+    needs: [code, push, release]
+    if: always() && needs.code.result != 'skipped'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      ISSUE: ${{ github.event.issue.number }}
+      RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      SHA: ${{ needs.push.outputs.sha }}
+      BUILD: ${{ needs.release.outputs.build }}
+      RESULT: ${{ needs.code.result }}/${{ needs.push.result }}/${{ needs.release.result }}
+    steps:
+      - run: |
+          # The pushed "Closes #N" usually closes the issue already; closing again is harmless.
+          case "$RESULT" in
+            success/success/success)
+              if [ -n "$BUILD" ]; then shipped="TestFlight build $BUILD uploaded."; else shipped="TestFlight upload skipped (secrets not set)."; fi
+              gh issue comment "$ISSUE" --body "Done in $SHA. $shipped [Run]($RUN)"
+              gh issue close "$ISSUE" || true ;;
+            success/success/*)
+              gh issue comment "$ISSUE" --body "Done in $SHA, but the TestFlight upload failed. [Run]($RUN)"
+              gh issue close "$ISSUE" || true ;;
+            *)
+              gh issue comment "$ISSUE" --body "Execute did not finish (code/push/release: $RESULT), so nothing was pushed. Adjust the issue and add the label again. [Run]($RUN)"
+              gh issue edit "$ISSUE" --remove-label execute ;;
+          esac

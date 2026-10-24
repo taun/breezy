@@ -53,6 +53,23 @@ BREEZY_FRESH=1 BREEZY_SANDBOX=1 scripts/simulator.sh "iPhone 15 Pro"
 
 `BREEZY_SANDBOX=1` makes a debug build use the sandbox with a fine-grained token stored in the Mac Keychain as `taun-io-sandbox-token` (`security add-generic-password -s taun-io-sandbox-token -a "$USER" -w`). The token goes straight from the Keychain into the app's environment and is kept in memory only. Release builds ignore it. `BREEZY_FRESH=1` starts from a clean install, and `BREEZY_OFFLINE=1` makes every GitHub request fail as if there were no network, to test offline behavior. With the XcodeBuildMCP server available, Claude Code can then tap through the app.
 
+## Pipeline: issues to TestFlight
+
+GitHub Actions (macOS runners, free for this public repo) runs three workflows in `.github/workflows/`:
+
+- **Test:** every branch and pull request: the BreezyKit and app tests, and an iOS build.
+- **TestFlight:** when the app changes on `main`, tests, archives the iOS app and uploads it to TestFlight. The build number is the UTC time (`YYYYMMDDHHMM`). It can also be run by hand (Actions › TestFlight › Run workflow), and `scripts/testflight.sh` does the same locally with `ASC_KEY_PATH` pointing at the `.p8` file.
+- **Execute issue:** adding the `execute` label to an issue has Claude implement it with the [Claude Code GitHub Action](https://github.com/anthropics/claude-code-action), following `CLAUDE.md`. If the tests pass, the commits are pushed straight to `main` (closing the issue), a TestFlight build is uploaded, and the result is commented on the issue. If anything fails, nothing is pushed, the label is removed, and the comment links to the run; add the label again to retry. Only issues opened **and** labeled by the repo owner run, because the issue text is Claude's instructions. Claude cannot drive the simulator there, so UI changes still need a look on a device. When other people contribute, switch the push job to opening a pull request instead.
+
+One-time setup:
+
+1. In App Store Connect, create the app record for bundle ID `org.taun.Breezy`, and a TestFlight internal testing group with yourself in it.
+2. Create an App Store Connect API key (Users and Access › Integrations › Team Keys) with the **Admin** role, so Xcode can create the distribution certificate and profile in the cloud. Note its Key ID and the Issuer ID, and download the `.p8` (once only).
+3. In this repo's Settings › Secrets and variables › Actions, add `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` (the whole `.p8` file's text) and `CLAUDE_CODE_OAUTH_TOKEN` (run `claude setup-token` in a terminal and paste what it prints).
+4. Create a label named `execute` (Issues › Labels).
+
+Without the App Store Connect secrets the TestFlight step is skipped with a notice; everything else still runs.
+
 ## Where things are
 
 - `Packages/BreezyKit`: everything testable. Reading and editing node files without disturbing their formatting, the GitHub client, the on-device storage, sync and publishing.
