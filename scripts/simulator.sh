@@ -29,7 +29,11 @@ DD="${TMPDIR:-/tmp}/breezy-dd"
 xcodebuild -project Breezy.xcodeproj -scheme Breezy -destination "id=$UDID" -derivedDataPath "$DD" \
   CODE_SIGNING_ALLOWED=NO build -quiet
 xcrun simctl terminate "$UDID" org.taun.Breezy 2>/dev/null || true
-[ "${BREEZY_FRESH:-0}" = 1 ] && xcrun simctl uninstall "$UDID" org.taun.Breezy 2>/dev/null || true
+if [ "${BREEZY_FRESH:-0}" = 1 ]; then
+  xcrun simctl uninstall "$UDID" org.taun.Breezy 2>/dev/null || true
+  # Preferences written with `simctl spawn defaults` live outside the app and survive uninstalling it.
+  xcrun simctl spawn "$UDID" defaults delete org.taun.Breezy 2>/dev/null || true
+fi
 xcrun simctl install "$UDID" "$DD/Build/Products/Debug-iphonesimulator/Breezy.app"
 DATA="$(xcrun simctl get_app_container "$UDID" org.taun.Breezy data)"
 BRANCH="${BREEZY_BRANCH:-$(git -C "$SITE" branch --show-current)}"

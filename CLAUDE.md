@@ -56,7 +56,8 @@ scripts/simulator.sh [device]   # build, install in the simulator seeded with th
 - **Checking UI changes:** `scripts/simulator.sh` needs no token: it writes the site's nodes into the app's local store, so the app opens offline with real content, and saves a screenshot to read. `BREEZY_DEFAULTS='key=value ...'` presets `@AppStorage` keys to test restoration. Interactive flows: when the XcodeBuildMCP server is available (it is configured at user scope on the main dev Mac with the simulator, ui-automation and macos workflows), use `snapshot_ui` to read the screen and `tap` / `type_text` / `swipe` to drive it. Set its session defaults first (project, scheme, simulator, and a `derivedDataPath` outside `~/Documents`).
 - **Real GitHub flows:** `BREEZY_SANDBOX=1 scripts/simulator.sh` runs a debug build against the sandbox repo `taun/taun-io-sandbox` with the Keychain token `taun-io-sandbox-token` (see README). Never paste or print the token: read it with `security find-generic-password -s taun-io-sandbox-token -w` inside a command that passes it through an environment variable. Never point tests at `taun/taun.github.io`. Add `BREEZY_OFFLINE=1` to make every GitHub request fail as with no network; relaunch without it to watch queued commits push.
 - XcodeBuildMCP's `screenshot` can return a stale frame; take screenshots with `xcrun simctl io <udid> screenshot` and use `snapshot_ui` for the element tree.
-- Only iOS 17.2 simulators are installed here; behavior on newer iOS (e.g. search bar placement) can differ.
+- Simulators here: iOS 17.2 (iPhone 15 Pro) and iOS 26.5 (iPhone 17 Pro). Check UI changes on 26.5 too: navigation and toolbar behavior differ between them and from the user's iOS 27 iPhone. No iOS 27 simulator is available; device-only bugs need the user to confirm on the phone.
+- `simctl spawn … defaults write` values persist after uninstalling the app; `BREEZY_FRESH=1` clears them.
 
 ## Conventions
 
