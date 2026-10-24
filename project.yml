@@ -16,6 +16,9 @@ targets:
         excludes: ["*.entitlements"]
     dependencies:
       - package: BreezyKit
+        product: BreezyKit
+    scheme:
+      testTargets: [BreezyTests]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: org.taun.Breezy
@@ -40,3 +43,25 @@ targets:
         CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*]: App/Breezy-iOS.entitlements
         CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]: App/Breezy-iOS.entitlements
         ENABLE_PREVIEWS: YES
+
+  # Unit tests for the app layer (AppModel, navigation policy). They compile the app's sources directly instead of
+  # launching the app as a host, so a test run never starts a real sync. Run on macOS: scripts/test.sh --app
+  BreezyTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: AppTests
+      - path: App
+        excludes: ["*.entitlements", "BreezyApp.swift"]
+    dependencies:
+      - package: BreezyKit
+        product: BreezyKit
+      - package: BreezyKit
+        product: BreezyKitTestSupport
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.taun.BreezyTests
+        SWIFT_VERSION: "6.0"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 6569EWWSLR

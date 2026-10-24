@@ -14,8 +14,8 @@ struct RootView: View {
 
     private var compactColumn: Binding<NavigationSplitViewColumn> {
         Binding(
-            get: { compactColumnRaw == "detail" && selection.wrappedValue != nil ? .detail : .sidebar },
-            set: { compactColumnRaw = $0 == .detail ? "detail" : "sidebar" })
+            get: { CompactNavigation.column(compactColumnRaw) },
+            set: { compactColumnRaw = CompactNavigation.raw($0) })
     }
 
     private var sheet: Binding<Sheet?> {
@@ -69,6 +69,12 @@ struct RootView: View {
                 #if os(macOS)
                 .toolbar { toolbar(ws) }
                 #endif
+                .onChange(of: selection.wrappedValue) { _, slug in
+                    compactColumnRaw = CompactNavigation.afterSelectionChange(to: slug)
+                }
+                .onAppear {
+                    compactColumnRaw = CompactNavigation.restored(compactColumnRaw, hasSelection: selection.wrappedValue != nil)
+                }
             } else if model.isBusy {
                 FirstDownloadView()
             } else if !model.hasToken {

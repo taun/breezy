@@ -45,7 +45,7 @@ A macOS / iOS / iPadOS app (SwiftUI, multiplatform) for editing the content of t
 ## Commands
 
 ```
-scripts/test.sh                 # BreezyKit tests (swift test); extra args pass through, e.g. --filter Workspace
+scripts/test.sh [kit|app]       # BreezyKit tests (swift test; `kit --filter X` passes args) and the app tests (macOS)
 scripts/build.sh [macos|ios]    # xcodegen generate + unsigned builds for macOS and/or the iOS Simulator
 scripts/simulator.sh [device]   # build, install in the simulator seeded with the site's nodes, launch, screenshot
 ```
@@ -62,4 +62,5 @@ scripts/simulator.sh [device]   # build, install in the simulator seeded with th
 
 - Add a line under **Unreleased** in `CHANGELOG.md` for every user-visible change. Releasing is described in `README.md` (version in `project.yml`, then an annotated `vX.Y.Z` tag).
 - New UI state and drafts get `@AppStorage` keys (see State restoration). New features must work offline, or degrade clearly when offline (see Offline-first).
-- Keep logic in BreezyKit with tests; network behavior is tested through `MockTransport`, never against GitHub.
+- Keep logic in BreezyKit with tests; network behavior is tested through `MockTransport` (in the `BreezyKitTestSupport` library), never against GitHub.
+- App-layer logic (`AppModel`, navigation policies such as `CompactNavigation`) is tested in `AppTests/` (target `BreezyTests`, macOS). It compiles the app sources directly rather than hosting the app, and `Harness` wires `AppModel` to a fake GitHub, a temporary `LocalStore` and its own `UserDefaults`. Every bug fixed in the app gets a regression test there when the logic can be expressed without a view; keep view code thin so it can.

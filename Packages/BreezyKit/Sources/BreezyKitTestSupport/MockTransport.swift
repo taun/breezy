@@ -1,20 +1,22 @@
 import Foundation
-@testable import BreezyKit
+import BreezyKit
 
-/// Answers requests by "METHOD path" (path without /repos/owner/name and with the query) and records them.
-final class MockTransport: HTTPTransport, @unchecked Sendable {
+/// A fake GitHub for tests (BreezyKit's and the app's). Answers requests by "METHOD path" (path without /repos/owner/name and with the query) and records them.
+public final class MockTransport: HTTPTransport, @unchecked Sendable {
+    public init() {}
+
     private let lock = NSLock()
     private var routes: [String: ([String: Any]?) -> (Int, Any)] = [:]
-    private(set) var requests: [(key: String, body: [String: Any]?)] = []
+    public private(set) var requests: [(key: String, body: [String: Any]?)] = []
 
-    func on(_ key: String, status: Int = 200, _ json: Any) { lock.withLock { routes[key] = { _ in (status, json) } } }
+    public func on(_ key: String, status: Int = 200, _ json: Any) { lock.withLock { routes[key] = { _ in (status, json) } } }
     /// A route whose answer depends on the request body or on state captured by the closure.
-    func on(_ key: String, handler: @escaping ([String: Any]?) -> (Int, Any)) { lock.withLock { routes[key] = handler } }
+    public func on(_ key: String, handler: @escaping ([String: Any]?) -> (Int, Any)) { lock.withLock { routes[key] = handler } }
 
-    func bodies(_ key: String) -> [[String: Any]] { lock.withLock { requests.filter { $0.key == key }.compactMap(\.body) } }
-    func count(_ key: String) -> Int { lock.withLock { requests.filter { $0.key == key }.count } }
+    public func bodies(_ key: String) -> [[String: Any]] { lock.withLock { requests.filter { $0.key == key }.compactMap(\.body) } }
+    public func count(_ key: String) -> Int { lock.withLock { requests.filter { $0.key == key }.count } }
 
-    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+    public func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let full = request.url!.absoluteString
         let path = full.replacingOccurrences(of: "https://api.github.com/repos/o/r", with: "")
         let key = "\(request.httpMethod!) \(path)"
@@ -33,7 +35,7 @@ final class MockTransport: HTTPTransport, @unchecked Sendable {
 
 extension MockTransport {
     /// Accepts pushes to `main`: each commit gets a new sha (c2, c3...) and moves the branch head, as GitHub would.
-    func acceptCommits(startingAt head: String = "c1") {
+    public func acceptCommits(startingAt head: String = "c1") {
         let lock = NSLock()
         var current = head, n = 1
         on("POST /git/trees") { _ in (201, ["sha": "tree-new"]) }
@@ -49,7 +51,7 @@ extension MockTransport {
     }
 
     /// A tiny repo: branch main at c1 with two nodes, a nested file that must be ignored, and one asset.
-    static func site() -> MockTransport {
+    public static func site() -> MockTransport {
         let m = MockTransport()
         let b64 = { (s: String) in Data(s.utf8).base64EncodedString() }
         m.on("GET /git/ref/heads/main", ["object": ["sha": "c1"]])
@@ -68,7 +70,7 @@ extension MockTransport {
     }
 
     /// GitHub's branch moves to `commit`, whose tree is the original one with `changing` applied (text, or nil to delete).
-    func remoteMoves(to commit: String, changing: [String: String?]) {
+    public func remoteMoves(to commit: String, changing: [String: String?]) {
         var files: [String: String] = ["src/nodes/a.md": "ba", "src/nodes/b.md": "bb"]
         for (path, text) in changing {
             if let text {

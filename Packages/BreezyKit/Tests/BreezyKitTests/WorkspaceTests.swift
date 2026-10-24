@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import BreezyKit
+import BreezyKitTestSupport
 
 /// A throwaway LocalStore per test.
 func tempStore() -> LocalStore {

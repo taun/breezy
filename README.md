@@ -34,7 +34,7 @@ It is stored in iCloud Keychain, so your other devices signed in to the same App
 ## Building and testing
 
 ```
-scripts/test.sh                 # BreezyKit tests, including a cross-check against the site's own parser
+scripts/test.sh [kit|app]       # BreezyKit tests (incl. a cross-check against the site's parser) and app tests
 scripts/build.sh [macos|ios]    # regenerate the project and build without signing
 scripts/simulator.sh            # build, install in the iOS Simulator with the site's nodes preloaded, launch, screenshot
 ```

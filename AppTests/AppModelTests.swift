@@ -1,0 +1,136 @@
+import BreezyKit
+import BreezyKitTestSupport
+import Foundation
+import SwiftUI
+import Testing
+
+/// An AppModel wired to a fake GitHub (repo "o/r"), a temporary local store and its own settings domain.
+@MainActor
+struct Harness {
+    let model: AppModel
+    let github: MockTransport
+    let store: LocalStore
+
+    init() {
+        let github = MockTransport.site() // main at c1 with nodes a and b
+        github.on("GET ", ["default_branch": "main"])
+        github.on("GET /branches?per_page=100", [["name": "main", "commit": ["sha": "c1"]]])
+        github.on("GET /pulls?state=open&per_page=100", [])
+        let store = LocalStore(root: FileManager.default.temporaryDirectory.appendingPathComponent("breezy-app-tests-\(UUID().uuidString)"))
+        let defaults = UserDefaults(suiteName: "breezy-app-tests-\(UUID().uuidString)")!
+        self.github = github
+        self.store = store
+        model = AppModel(tokens: MemoryTokenStore("t"), defaults: defaults, transport: github, storeFor: { _ in store })
+    }
+
+    /// Connects to the fake repo, which downloads main.
+    func connect() async {
+        await model.saveSettings(repo: "o/r", token: "")
+    }
+
+    /// Lets GitHub accept the creation of `branch` at c1 and list it afterwards, as GitHub does.
+    func acceptBranch(_ branch: String) {
+        github.on("POST /git/refs", status: 201, ["ref": "refs/heads/\(branch)"])
+        github.on("GET /git/ref/heads/\(branch)", ["object": ["sha": "c1"]])
+        github.on("GET /branches?per_page=100", [["name": "main", "commit": ["sha": "c1"]], ["name": branch, "commit": ["sha": "c1"]]])
+    }
+
+    /// GitHub no longer has `branch` (published and deleted on another device).
+    func deleteOnGitHub(_ branch: String) {
+        github.on("GET /git/ref/heads/\(branch)", status: 404, ["message": "Not Found"])
+        github.on("GET /branches?per_page=100", [["name": "main", "commit": ["sha": "c1"]]])
+    }
+}
+
+@MainActor @Suite struct AppModelTests {
+    @Test func connectingDownloadsTheDefaultBranch() async throws {
+        let h = Harness()
+        await h.connect()
+        #expect(h.model.errorMessage == nil)
+        #expect(h.model.currentBranch == "main")
+        #expect(h.model.workspace?.slugs == ["a", "b"])
+    }
+
+    /// Regression: the branch list was fetched before sync created the new branch on GitHub, so a branch created in
+    /// the app was labeled "deleted on GitHub" until the next sync.
+    @Test func newBranchIsNotLabeledDeletedOnGitHub() async throws {
+        let h = Harness()
+        await h.connect()
+        h.acceptBranch("feature")
+        await h.model.createBranch("feature")
+        #expect(h.model.errorMessage == nil)
+        #expect(h.model.currentBranch == "feature")
+        #expect(h.github.count("POST /git/refs") == 1)
+        #expect(!h.model.isDeletedOnGitHub("feature"))
+        #expect(!h.model.branchLabel("feature").contains("deleted"))
+    }
+
+    @Test func branchDeletedElsewhereWithNothingLocalIsDroppedForMain() async throws {
+        let h = Harness()
+        await h.connect()
+        h.acceptBranch("feature")
+        await h.model.createBranch("feature")
+        h.deleteOnGitHub("feature")
+        await h.model.sync()
+        #expect(h.model.currentBranch == "main")
+        #expect(h.store.branchState(named: "feature") == nil)
+        #expect(h.model.errorMessage?.contains("switched to main") == true)
+        #expect(!h.model.showBranchDeleted)
+    }
+
+    @Test func branchDeletedElsewhereWithLocalEditsIsKeptAndAsks() async throws {
+        let h = Harness()
+        await h.connect()
+        h.acceptBranch("feature")
+        await h.model.createBranch("feature")
+        try h.model.workspace?.update("a") { try $0.setTitle("Unpushed") }
+        h.deleteOnGitHub("feature")
+        await h.model.sync()
+        #expect(h.model.currentBranch == "feature")
+        #expect(h.model.showBranchDeleted)
+        #expect(h.model.isDeletedOnGitHub("feature"))
+        #expect(h.model.syncStatus == .branchDeleted)
+        #expect(h.model.workspace?.nodes["a"]?.title == "Unpushed")
+
+        // Recreating puts the branch back on GitHub and keeps the edit.
+        h.acceptBranch("feature")
+        await h.model.recreateBranchOnGitHub()
+        #expect(!h.model.showBranchDeleted)
+        #expect(h.github.bodies("POST /git/refs").last?["sha"] as? String == "c1")
+        #expect(h.model.workspace?.nodes["a"]?.title == "Unpushed")
+    }
+
+    @Test func cleanCopiesOfBranchesGoneFromGitHubArePruned() async throws {
+        let h = Harness()
+        await h.connect()
+        h.acceptBranch("old")
+        await h.model.createBranch("old")
+        await h.model.switchBranch("main")
+        #expect(h.store.branchState(named: "old") != nil)
+        h.deleteOnGitHub("old")
+        await h.model.sync()
+        #expect(h.store.branchState(named: "old") == nil)
+        #expect(!h.model.branchNames.contains("old"))
+    }
+}
+
+/// Regression: on iOS 27 tapping a node did nothing. The column getter only allowed the editor while a selection
+/// existed, and iOS sets the column before the selection, so the request to open the editor was turned back.
+@Suite struct CompactNavigationTests {
+    @Test func openingTheEditorDoesNotDependOnTheSelectionAlreadyBeingSet() {
+        // iOS asks for the editor first: the stored value must say editor, with no selection consulted.
+        let stored = CompactNavigation.raw(.detail)
+        #expect(CompactNavigation.column(stored) == .detail)
+    }
+
+    @Test func selectionDrivesTheColumn() {
+        #expect(CompactNavigation.afterSelectionChange(to: "a") == "detail")
+        #expect(CompactNavigation.afterSelectionChange(to: nil) == "sidebar")
+    }
+
+    @Test func editorIsOnlyRestoredWithSomethingToShow() {
+        #expect(CompactNavigation.restored("detail", hasSelection: true) == "detail")
+        #expect(CompactNavigation.restored("detail", hasSelection: false) == "sidebar")
+        #expect(CompactNavigation.restored("sidebar", hasSelection: true) == "sidebar")
+    }
+}

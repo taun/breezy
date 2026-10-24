@@ -12,11 +12,15 @@ import AppKit
 final class AppModel {
     private static let repoKey = "repo"
 
-    var repoString: String = UserDefaults.standard.string(forKey: AppModel.repoKey) ?? "taun/taun.github.io"
+    var repoString: String
     private(set) var hasToken: Bool
     /// Whether the token is in iCloud Keychain, only on this device (and why), or missing.
     private(set) var tokenSync: KeychainTokenStore.Status = .missing
     private let tokens: TokenStore
+    // Injected so tests can run AppModel against a fake GitHub, a temporary folder and their own settings.
+    private let defaults: UserDefaults
+    private let transport: HTTPTransport
+    private let storeFor: (RepoRef) -> LocalStore
 
     private(set) var store: LocalStore?
     private(set) var repoState = RepoState()
@@ -63,8 +67,13 @@ final class AppModel {
     private let monitor = NWPathMonitor()
     private var started = false
 
-    init(tokens: TokenStore = KeychainTokenStore()) {
+    init(tokens: TokenStore = KeychainTokenStore(), defaults: UserDefaults = .standard,
+         transport: HTTPTransport = URLSessionTransport(), storeFor: @escaping (RepoRef) -> LocalStore = LocalStore.standard(for:)) {
         var tokens = tokens
+        self.defaults = defaults
+        self.transport = transport
+        self.storeFor = storeFor
+        repoString = defaults.string(forKey: Self.repoKey) ?? "taun/taun.github.io"
         #if DEBUG
         // Test runs against a sandbox repo (scripts/simulator.sh with BREEZY_SANDBOX=1): the token comes from the
         // environment and lives only in memory, so it never touches the Keychain or iCloud. Not in release builds.
@@ -80,7 +89,7 @@ final class AppModel {
     }
 
     var repo: RepoRef? { RepoRef(repoString) }
-    var client: GitHubClient? { repo.flatMap { r in tokens.load().map { GitHubClient(repo: r, token: $0) } } }
+    var client: GitHubClient? { repo.flatMap { r in tokens.load().map { GitHubClient(repo: r, token: $0, transport: transport) } } }
     var defaultBranch: String { repoState.defaultBranch }
     var currentBranch: String { workspace?.branch ?? defaultBranch }
     var isOnDefaultBranch: Bool { currentBranch == defaultBranch }
@@ -149,7 +158,7 @@ final class AppModel {
 
     private func openLocal() {
         guard let repo else { return }
-        let store = LocalStore.standard(for: repo)
+        let store = storeFor(repo)
         self.store = store
         repoState = store.repoState() ?? RepoState()
         do { workspace = try SiteWorkspace.open(repoState.lastBranch ?? repoState.defaultBranch, store: store) } catch {
@@ -167,7 +176,7 @@ final class AppModel {
         }
         if newRepo != repoString || store == nil {
             repoString = newRepo
-            UserDefaults.standard.set(newRepo, forKey: Self.repoKey)
+            defaults.set(newRepo, forKey: Self.repoKey)
             workspace = nil
             openLocal()
         }
@@ -230,13 +239,14 @@ final class AppModel {
                 case .conflicts: showConflicts = true
                 case .branchDeleted(hasLocalChanges: false): try await leaveDeletedBranch(ws.branch, client: client, store: store)
                 case .branchDeleted(hasLocalChanges: true): showBranchDeleted = true
-                case .synced: break
-                }
-                // A branch created on this device reaches GitHub during ws.sync, after the branch list was fetched
-                // above; record it, or the menus would call it "deleted on GitHub" until the next sync.
-                if let current = workspace, current.state.existsOnRemote, !repoState.remoteBranches.contains(current.branch) {
-                    repoState.remoteBranches.append(current.branch)
-                    try store.saveRepoState(repoState)
+                case .synced:
+                    // A branch created on this device reaches GitHub during ws.sync, after the branch list was
+                    // fetched above; record it, or the menus would call it "deleted on GitHub" until the next sync.
+                    // Only after .synced: that is when GitHub confirmed the branch exists.
+                    if !repoState.remoteBranches.contains(ws.branch) {
+                        repoState.remoteBranches.append(ws.branch)
+                        try store.saveRepoState(repoState)
+                    }
                 }
             }
             pullRequests = try await client.openPullRequests()

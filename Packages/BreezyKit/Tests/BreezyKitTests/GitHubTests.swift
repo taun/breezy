@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import BreezyKit
+import BreezyKitTestSupport
 
 @Suite struct GitHubClientTests {
     let repo = RepoRef(owner: "o", name: "r")
