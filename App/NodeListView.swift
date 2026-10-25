@@ -88,7 +88,7 @@ struct NodeListView: View {
             ToolbarItem { Button { showNew = true } label: { Label("New Node", systemImage: "plus") } }
         }
         .sheet(isPresented: $showNew) {
-            NavigationStack { NewNodeView(workspace: workspace, selection: $selection) }.macSheetFrame(minWidth: 420, minHeight: 320)
+            NavigationStack { NewNodeView(workspace: workspace, selection: $selection) }.macSheetFrame(minWidth: 420, minHeight: 320).environment(model)
         }
         .refreshable { await model.sync() }
         .overlay {

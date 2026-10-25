@@ -4,6 +4,10 @@ All notable changes to Breezy are documented here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Fixed
+
+- **Crash opening Settings on the Mac** (#10): after reverting an edit, opening Settings could quit the app with a SwiftUI environment assertion. Every sheet now receives the app's model explicitly. The cause could not be reproduced without the second half of the crash report, so please confirm.
+
 ### Added
 
 - **File issues from Breezy** (#9): Settings › File an Issue… takes a type (Bug or Enhancement), title and description, and an Execute switch that adds the `execute` label so Claude implements it. The token must also cover taun/breezy with Issues read and write; otherwise the error says what to change. The draft is kept if the app is closed.

@@ -54,6 +54,7 @@ struct RootView: View {
     }
 
     var body: some View {
+        let appModel = model
         @Bindable var model = model
         Group {
             if let ws = model.workspace {
@@ -99,12 +100,13 @@ struct RootView: View {
             }
             .activityBanner()
             .macSheetFrame(minWidth: 460, minHeight: 480)
+            .environment(appModel)
         }
         .sheet(isPresented: $model.showBranchDeleted) {
-            NavigationStack { BranchDeletedView() }.activityBanner().macSheetFrame(minWidth: 480, minHeight: 380)
+            NavigationStack { BranchDeletedView() }.activityBanner().macSheetFrame(minWidth: 480, minHeight: 380).environment(appModel)
         }
         .sheet(isPresented: $model.showConflicts) {
-            NavigationStack { ConflictsView() }.activityBanner().macSheetFrame(minWidth: 560, minHeight: 520)
+            NavigationStack { ConflictsView() }.activityBanner().macSheetFrame(minWidth: 560, minHeight: 520).environment(appModel)
         }
         .activityBanner()
         .onChange(of: model.wantsSettings) { _, wants in

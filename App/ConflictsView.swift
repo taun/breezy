@@ -37,6 +37,7 @@ struct ConflictsView: View {
             .sheet(item: editing) { c in
                 NavigationStack { MergeEditor(conflict: c, mine: ws.localText(path: c.path) ?? "", theirs: ws.text(sha: c.remoteSHA) ?? "") }
                     .macSheetFrame(minWidth: 640, minHeight: 560)
+                    .environment(model)
             }
         }
     }

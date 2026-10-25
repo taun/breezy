@@ -91,7 +91,7 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .sheet(isPresented: $filingIssue) {
-            NavigationStack { IssueView(close: { filingIssue = false }) }.macSheetFrame(minWidth: 460, minHeight: 420)
+            NavigationStack { IssueView(close: { filingIssue = false }) }.macSheetFrame(minWidth: 460, minHeight: 420).environment(model)
         }
         .navigationTitle("Settings")
         .toolbar {
