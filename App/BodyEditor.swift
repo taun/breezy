@@ -7,12 +7,29 @@ struct BodyEditor: View {
     let slug: String
     /// "slug|start|end" in UTF-16 offsets.
     @AppStorage("editor.bodySelection") private var stored = ""
+    /// The editor edits this local copy, not the model's text directly: a text view bound to a value that is
+    /// re-read from the model on every keystroke resets its cursor (typing "Hello" gave "ElloH").
+    @State private var local: String
+
+    init(text: Binding<String>, slug: String) {
+        _text = text
+        self.slug = slug
+        _local = State(initialValue: text.wrappedValue)
+    }
 
     var body: some View {
+        editor
+            .onChange(of: local) { _, v in if v != text { text = v } }
+            // Changes from elsewhere (sync, conflict resolution, another node).
+            .onChange(of: text) { _, v in if v != local { local = v } }
+            .onChange(of: slug) { _, _ in local = text }
+    }
+
+    @ViewBuilder private var editor: some View {
         if #available(iOS 18, macOS 15, *) {
-            SelectionRestoringEditor(text: $text, slug: slug, stored: $stored)
+            SelectionRestoringEditor(text: $local, slug: slug, stored: $stored)
         } else {
-            TextEditor(text: $text)
+            TextEditor(text: $local)
         }
     }
 }
