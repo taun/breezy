@@ -166,6 +166,17 @@ public struct GitHubClient: Sendable {
         }
     }
 
+    // MARK: Issues
+
+    /// Opens an issue. Labels that do not exist in the repository are created by GitHub.
+    public func createIssue(title: String, body: String, labels: [String]) async throws -> Issue {
+        let json = try await object("POST", "/issues", body: ["title": title, "body": body, "labels": labels])
+        guard let number = json["number"] as? Int, let url = (json["html_url"] as? String).flatMap(URL.init(string:)) else {
+            throw GitHubError.invalidResponse
+        }
+        return Issue(number: number, title: json["title"] as? String ?? title, htmlURL: url)
+    }
+
     // MARK: Plumbing
 
     static func pullRequest(_ j: [String: Any]) -> PullRequest {

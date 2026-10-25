@@ -8,6 +8,7 @@ struct SettingsView: View {
     @State private var repo = ""
     @State private var token = ""
     @State private var website = ""
+    @State private var filingIssue = false
 
     var body: some View {
         Form {
@@ -35,7 +36,7 @@ struct SettingsView: View {
             } header: {
                 Text("Personal access token")
             } footer: {
-                Text("Create a fine-grained token for this repository with **Contents** and **Pull requests** set to read and write, and optionally **Actions** read to show when the website has rebuilt. It is kept in iCloud Keychain, so your other devices signed in to the same Apple ID get it automatically.")
+                Text("Create a fine-grained token for this repository with **Contents** and **Pull requests** set to read and write, and optionally **Actions** read to show when the website has rebuilt. To file issues on Breezy from the app, also add the taun/breezy repository with **Issues** read and write. It is kept in iCloud Keychain, so your other devices signed in to the same Apple ID get it automatically.")
             }
             Section {
                 TextField("https://www.example.org/", text: $website)
@@ -76,6 +77,11 @@ struct SettingsView: View {
                 }
             }
             Section {
+                Button("File an Issue…") { filingIssue = true }
+            } footer: {
+                Text("Report a bug or suggest an enhancement for Breezy without leaving the app.")
+            }
+            Section {
                 Text(AppVersion.current)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -84,6 +90,9 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .sheet(isPresented: $filingIssue) {
+            NavigationStack { IssueView(close: { filingIssue = false }) }.macSheetFrame(minWidth: 460, minHeight: 420)
+        }
         .navigationTitle("Settings")
         .toolbar {
             if let close {

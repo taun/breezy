@@ -93,6 +93,30 @@ final class AppModel {
 
     var repo: RepoRef? { RepoRef(repoString) }
     var client: GitHubClient? { repo.flatMap { r in tokens.load().map { GitHubClient(repo: r, token: $0, transport: transport) } } }
+
+    /// Files an issue in Breezy's own repository with the saved token. Returns the new issue, or nil with `errorMessage` set.
+    /// The token must also cover taun/breezy with Issues read and write; GitHub answers 403/404 otherwise.
+    func fileIssue(title: String, body: String, kind: IssueKind, execute: Bool) async -> Issue? {
+        guard isOnline else {
+            errorMessage = "Filing an issue needs a network connection. Try again when you are online."
+            return nil
+        }
+        guard let token = tokens.load() else {
+            errorMessage = "Save a GitHub token in Settings first."
+            return nil
+        }
+        let client = GitHubClient(repo: .breezy, token: token, transport: transport)
+        let labels = [kind.rawValue] + (execute ? ["execute"] : [])
+        do {
+            return try await client.createIssue(title: title.trimmingCharacters(in: .whitespacesAndNewlines), body: body, labels: labels)
+        } catch let GitHubError.http(status, _) where status == 403 || status == 404 {
+            errorMessage = "GitHub would not let this token file issues in \(RepoRef.breezy.description) (\(status)). Edit the token on github.com: add that repository and set **Issues** to read and write."
+        } catch {
+            handle(error)
+        }
+        return nil
+    }
+
     var defaultBranch: String { repoState.defaultBranch }
     var currentBranch: String { workspace?.branch ?? defaultBranch }
     var isOnDefaultBranch: Bool { currentBranch == defaultBranch }

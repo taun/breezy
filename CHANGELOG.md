@@ -6,6 +6,7 @@ All notable changes to Breezy are documented here. The format follows [Keep a Ch
 
 ### Added
 
+- **File issues from Breezy** (#9): Settings › File an Issue… takes a type (Bug or Enhancement), title and description, and an Execute switch that adds the `execute` label so Claude implements it. The token must also cover taun/breezy with Issues read and write; otherwise the error says what to change. The draft is kept if the app is closed.
 - **App version in Settings** (#6): the bottom of Settings shows "Breezy 1.0.0 (build N)" in small secondary text.
 - **Node states** (#3): each node shows whether it is a **draft** (gold hammer: will not be published), will be **published** (green check: new, changed or edited here) or is **published** and unchanged (blue globe), compared with the published branch (main). The filter menu has a **Show** section (All, Draft, Publish, Published) that combines with type and search; the filter icon fills in while the list is narrowed, and an empty result says why.
 - **Deleted nodes stay in the list** (#3), struck through with a red trash icon, until the deletion is published, so they can be opened and undeleted (swipe, long-press or the Undelete button on the node). Deleting a node that others link to says which nodes link to it and offers **Delete Only** (default; the links stay and are flagged) or **Delete and Remove Links**. Nodes linking to a deleted node show an orange link icon and a validation message, and **Show › Broken Links** lists them.

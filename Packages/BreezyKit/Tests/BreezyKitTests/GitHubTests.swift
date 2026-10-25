@@ -33,6 +33,19 @@ import BreezyKitTestSupport
         #expect(m.count("POST /git/trees") == 0)
     }
 
+    @Test func createIssueSendsTitleBodyAndLabels() async throws {
+        let m = MockTransport()
+        m.on("POST /issues", status: 201, ["number": 12, "title": "T", "html_url": "https://github.com/o/r/issues/12"])
+        let client = GitHubClient(repo: repo, token: "tok", transport: m)
+        let issue = try await client.createIssue(title: "T", body: "B", labels: ["bug", "execute"])
+        #expect(issue.number == 12)
+        #expect(issue.htmlURL.absoluteString == "https://github.com/o/r/issues/12")
+        let sent = try #require(m.bodies("POST /issues").first)
+        #expect(sent["title"] as? String == "T")
+        #expect(sent["body"] as? String == "B")
+        #expect(sent["labels"] as? [String] == ["bug", "execute"])
+    }
+
     @Test func pullRequestCreateAndMerge() async throws {
         let m = MockTransport()
         m.on("POST /pulls", status: 201, ["number": 7, "title": "T", "state": "open", "head": ["ref": "edit"], "base": ["ref": "main"],

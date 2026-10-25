@@ -20,6 +20,18 @@ public struct RepoRef: Codable, Hashable, Sendable {
     public var description: String { "\(owner)/\(name)" }
 }
 
+public extension RepoRef {
+    /// Where Breezy's own issues are filed.
+    static let breezy = RepoRef(owner: "taun", name: "breezy")
+}
+
+/// A GitHub issue, as returned right after creating it.
+public struct Issue: Hashable, Sendable {
+    public var number: Int
+    public var title: String
+    public var htmlURL: URL
+}
+
 public enum GitHubError: Error, Equatable, LocalizedError {
     case invalidResponse
     /// Non-2xx status with GitHub's message.
@@ -99,4 +111,9 @@ public struct PullRequest: Hashable, Sendable, Identifiable {
     public var mergeableState: String?
     public var htmlURL: URL?
     public var id: Int { number }
+}
+
+/// The label that classifies an issue filed from the app.
+public enum IssueKind: String, CaseIterable, Sendable {
+    case bug, enhancement
 }

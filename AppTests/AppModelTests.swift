@@ -162,3 +162,35 @@ struct Harness {
         #expect(h.model.syncStatus == .synced)
     }
 }
+
+@MainActor @Suite struct FileIssueTests {
+    let issues = "POST https://api.github.com/repos/taun/breezy/issues"
+
+    @Test func filesAnIssueWithKindAndExecuteLabels() async throws {
+        let h = Harness()
+        h.github.on(issues, status: 201, ["number": 9, "title": "T", "html_url": "https://github.com/taun/breezy/issues/9"])
+        let issue = await h.model.fileIssue(title: " T ", body: "B", kind: .enhancement, execute: true)
+        #expect(issue?.number == 9)
+        #expect(h.model.errorMessage == nil)
+        let sent = try #require(h.github.bodies(issues).first)
+        #expect(sent["title"] as? String == "T")
+        #expect(sent["labels"] as? [String] == ["enhancement", "execute"])
+    }
+
+    @Test func tokenWithoutAccessExplainsWhatToChange() async throws {
+        let h = Harness()
+        h.github.on(issues, status: 404, ["message": "Not Found"])
+        let issue = await h.model.fileIssue(title: "T", body: "", kind: .bug, execute: false)
+        #expect(issue == nil)
+        #expect(h.model.errorMessage?.contains("Issues") == true)
+    }
+
+    @Test func offlineDoesNotSend() async throws {
+        let h = Harness()
+        h.model.setOnlineForTesting(false)
+        let issue = await h.model.fileIssue(title: "T", body: "", kind: .bug, execute: false)
+        #expect(issue == nil)
+        #expect(h.github.count(issues) == 0)
+        #expect(h.model.errorMessage != nil)
+    }
+}
