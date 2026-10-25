@@ -12,6 +12,15 @@ public struct NodeDate: Equatable, Sendable {
         self.precision = precision
     }
 
+    /// This date with another precision. Going from a year to a day, the placeholder `YYYY-01-01` becomes
+    /// `todayISO` when it is in the same year, so the day picker starts at today rather than January 1.
+    public func changingPrecision(to new: DatePrecision, todayISO: String) -> NodeDate {
+        if precision == .year, new == .day, iso.prefix(4) == todayISO.prefix(4) {
+            return NodeDate(iso: todayISO, precision: .day)
+        }
+        return NodeDate(iso: iso, precision: new)
+    }
+
     public var label: String { precision == .year ? String(iso.prefix(4)) : iso }
 
     /// Interprets decoded `date:` and `datePrecision:` values like lib/frontmatter.js: a year alone (integer 1000-9999

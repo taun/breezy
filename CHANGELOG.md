@@ -19,6 +19,7 @@ All notable changes to Breezy are documented here. The format follows [Keep a Ch
 
 ### Fixed
 
+- **Date defaults to today** (#8): switching a date from Year to Day starts the day picker at today (when the year is the current one) instead of January 1.
 - **Body editor:** the cursor no longer jumps back while typing (typing "Hello" gave "ElloH") (#7).
 - **iPhone:** tapping a node did nothing on iOS 27, so nodes could not be opened for editing (#2). Tapping a node now always opens it, and going back returns to the list.
 - **iPhone:** the Commit button could be hidden in the system's overflow menu when the top bar was full, and on iOS 26 and later it showed only as an unlabeled blue check. It is now a full-width "Commit N Changes" button at the bottom of the node list.

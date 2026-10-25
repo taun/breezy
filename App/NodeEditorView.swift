@@ -128,7 +128,9 @@ struct DateSection: View {
                 set(on ? NodeDate(iso: "\(Calendar.current.component(.year, from: .now))-01-01", precision: .year) : nil)
             }))
             if let date {
-                Picker("Precision", selection: Binding(get: { date.precision }, set: { p in set(NodeDate(iso: date.iso, precision: p)) })) {
+                Picker("Precision", selection: Binding(get: { date.precision }, set: { p in
+                    set(date.changingPrecision(to: p, todayISO: Self.toISO(.now)))
+                })) {
                     Text("Year").tag(DatePrecision.year)
                     Text("Day").tag(DatePrecision.day)
                 }
