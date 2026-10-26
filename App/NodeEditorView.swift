@@ -11,82 +11,130 @@ struct NodeEditorView: View {
     @AppStorage("editor.focus") private var focusRaw = ""
     @FocusState private var focus: Field?
 
+    // The selected tab, restored on relaunch.
+    @AppStorage("editor.tab") private var tabRaw = Tab.basics.rawValue
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    #endif
+
     enum Field: String { case title, summary, body }
+
+    enum Tab: String, CaseIterable, Identifiable {
+        case basics = "Basics", date = "Date", links = "Links", media = "Media", body = "Body"
+        var id: String { rawValue }
+    }
+
+    private var tab: Tab { Tab(rawValue: tabRaw) ?? .basics }
+
+    @ViewBuilder private var tabPicker: some View {
+        let picker = Picker("Section", selection: $tabRaw) {
+            ForEach(Tab.allCases) { Text($0.rawValue).tag($0.rawValue) }
+        }
+        .labelsHidden()
+        Group {
+            #if os(iOS)
+            if sizeClass == .compact { picker.pickerStyle(.menu) } else { picker.pickerStyle(.segmented) }
+            #else
+            picker.pickerStyle(.segmented)
+            #endif
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+    }
+
+    @ViewBuilder private var issuesBanner: some View {
+        let issues = workspace.issues(for: slug)
+        if !issues.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(issues, id: \.message) { issue in
+                    Label(issue.message, systemImage: issue.severity == .error ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
+                        .foregroundStyle(issue.severity == .error ? .red : .orange)
+                        .font(.footnote)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal)
+            .padding(.bottom, 8)
+        }
+    }
+
+    @ViewBuilder private func basics(_ node: NodeFile) -> some View {
+        Section {
+            TextField("Title", text: bind(\.title) { try $0.setTitle($1) })
+                .focused($focus, equals: .title)
+            TypeField(type: bind(\.type) { try $0.setType($1) }, known: workspace.types)
+            TextField("Summary", text: bind(\.summary) { try $0.setSummary($1) }, axis: .vertical)
+                .focused($focus, equals: .summary)
+            CommitTextField("Tags, comma separated", value: node.tags.joined(separator: ", ")) { text in
+                edit { try $0.setTags(text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }) }
+            }
+            Toggle("Draft (not published)", isOn: bind(\.draft) { try $0.setDraft($1) })
+        }
+    }
+
+    @ViewBuilder private func media(_ node: NodeFile) -> some View {
+        Section {
+            ForEach(NodeFile.stringKeys, id: \.self) { key in
+                HStack {
+                    TextField(key.capitalized, text: Binding(
+                        get: { node.strings[key] ?? "" },
+                        set: { v in edit { try $0.setString(key, v) } }))
+                        .autocorrectionDisabled()
+                    if key == "slides" || key == "archive" {
+                        AssetMenu(paths: workspace.assetPaths) { path in edit { try $0.setString(key, path) } }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The editor fills the tab and scrolls itself, so the cursor stays on screen as one types.
+    @ViewBuilder private func bodyTab(_ node: NodeFile) -> some View {
+        Picker("Body", selection: $showPreview) {
+            Text("Edit").tag(false)
+            Text("Preview").tag(true)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .padding(.horizontal)
+        .padding(.bottom, 8)
+        if showPreview {
+            ScrollView { MarkdownPreview(node: node).padding() }
+        } else {
+            BodyEditor(text: Binding(get: { node.body }, set: { v in edit { $0.setBody(v) } }), slug: slug)
+                .focused($focus, equals: .body)
+                .font(.body.monospaced())
+                .padding(.horizontal, 12)
+        }
+    }
 
     private var node: NodeFile? { workspace.nodes[slug] }
 
     var body: some View {
         if let node {
-            ScrollViewReader { proxy in
-            Form {
-                let issues = workspace.issues(for: slug)
-                if !issues.isEmpty {
-                    Section {
-                        ForEach(issues, id: \.message) { issue in
-                            Label(issue.message, systemImage: issue.severity == .error ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
-                                .foregroundStyle(issue.severity == .error ? .red : .orange)
-                        }
-                    }
-                }
-                Section("Basics") {
-                    TextField("Title", text: bind(\.title) { try $0.setTitle($1) })
-                        .focused($focus, equals: .title).id(Field.title)
-                    TypeField(type: bind(\.type) { try $0.setType($1) }, known: workspace.types)
-                    TextField("Summary", text: bind(\.summary) { try $0.setSummary($1) }, axis: .vertical)
-                        .focused($focus, equals: .summary).id(Field.summary)
-                    CommitTextField("Tags, comma separated", value: node.tags.joined(separator: ", ")) { text in
-                        edit { try $0.setTags(text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }) }
-                    }
-                    Toggle("Draft (not published)", isOn: bind(\.draft) { try $0.setDraft($1) })
-                }
-                DateSection(date: node.date) { new in edit { try $0.setDate(new) } }
-                LinkEditorView(workspace: workspace, slug: slug)
-                Section("Media") {
-                    ForEach(NodeFile.stringKeys, id: \.self) { key in
-                        HStack {
-                            TextField(key.capitalized, text: Binding(
-                                get: { node.strings[key] ?? "" },
-                                set: { v in edit { try $0.setString(key, v) } }))
-                                .autocorrectionDisabled()
-                            if key == "slides" || key == "archive" {
-                                AssetMenu(paths: workspace.assetPaths) { path in edit { try $0.setString(key, path) } }
-                            }
-                        }
-                    }
-                }
-                Section {
-                    Picker("Body", selection: $showPreview) {
-                        Text("Edit").tag(false)
-                        Text("Preview").tag(true)
-                    }
-                    .pickerStyle(.segmented)
-                    if showPreview {
-                        MarkdownPreview(node: node)
-                    } else {
-                        BodyEditor(text: Binding(get: { node.body }, set: { v in edit { $0.setBody(v) } }), slug: slug)
-                            .focused($focus, equals: .body)
-                            .font(.body.monospaced())
-                            .frame(minHeight: 280)
-                            .id(Field.body)
-                    }
-                } header: {
-                    Text("Body")
+            VStack(spacing: 0) {
+                tabPicker
+                issuesBanner
+                switch tab {
+                case .basics: Form { basics(node) }.formStyle(.grouped)
+                case .date: Form { DateSection(date: node.date) { new in edit { try $0.setDate(new) } } }.formStyle(.grouped)
+                case .links: Form { LinkEditorView(workspace: workspace, slug: slug) }.formStyle(.grouped)
+                case .media: Form { media(node) }.formStyle(.grouped)
+                case .body: bodyTab(node)
                 }
             }
-            .formStyle(.grouped)
             .onChange(of: focus) { _, f in
                 // Leaving the app also clears focus; only record changes made while in use.
                 if scenePhase == .active { focusRaw = f.map { "\(slug)|\($0.rawValue)" } ?? "" }
             }
             .task {
-                // Put the cursor back where it was, and scroll to it.
+                // Put the cursor back where it was, on the tab that holds it.
                 let parts = focusRaw.split(separator: "|")
                 guard parts.count == 2, parts[0] == slug, let f = Field(rawValue: String(parts[1])) else { return }
                 if f == .body && showPreview { return }
+                tabRaw = (f == .body ? Tab.body : Tab.basics).rawValue
                 try? await Task.sleep(for: .milliseconds(150))
-                proxy.scrollTo(f, anchor: .center)
                 focus = f
-            }
             }
             .navigationTitle(node.title)
             .toolbar {

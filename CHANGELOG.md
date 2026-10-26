@@ -10,6 +10,8 @@ All notable changes to Breezy are documented here. The format follows [Keep a Ch
 
 ### Added
 
+- **Editor tabs** (#11): the node editor shows one section at a time — Basics, Date, Links, Media, Body — chosen with a control at the top (a menu on iPhone). The Body tab gives the text editor the whole screen and scrolls with the cursor as you type. The selected tab is restored on relaunch.
+- **Easier link relations** (#12): the relation menu is now at the left of each link, with a wider tap area.
 - **File issues from Breezy** (#9): Settings › File an Issue… takes a type (Bug or Enhancement), title and description, and an Execute switch that adds the `execute` label so Claude implements it. The token must also cover taun/breezy with Issues read and write; otherwise the error says what to change. The draft is kept if the app is closed.
 - **App version in Settings** (#6): the bottom of Settings shows "Breezy 1.0.0 (build N)" in small secondary text.
 - **Node states** (#3): each node shows whether it is a **draft** (gold hammer: will not be published), will be **published** (green check: new, changed or edited here) or is **published** and unchanged (blue globe), compared with the published branch (main). The filter menu has a **Show** section (All, Draft, Publish, Published) that combines with type and search; the filter icon fills in while the list is narrowed, and an empty result says why.

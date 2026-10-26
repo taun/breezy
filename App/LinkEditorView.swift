@@ -17,6 +17,7 @@ struct LinkEditorView: View {
         Section {
             ForEach(Array(links.enumerated()), id: \.offset) { i, link in
                 HStack {
+                    RelationField(rel: link.rel) { rel in modify(i) { $0.rel = rel } }
                     Image(systemName: "arrow.right").foregroundStyle(.secondary)
                     Picker("Target", selection: Binding(get: { link.to }, set: { slug in modify(i) { $0.to = slug } })) {
                         if workspace.nodes[link.to] == nil {
@@ -25,7 +26,6 @@ struct LinkEditorView: View {
                         ForEach(targets, id: \.slug) { Text($0.title).tag($0.slug) }
                     }
                     .labelsHidden()
-                    RelationField(rel: link.rel) { rel in modify(i) { $0.rel = rel } }
                     Button(role: .destructive) { setLinks(links.enumerated().filter { $0.offset != i }.map(\.element)) } label: {
                         Image(systemName: "minus.circle")
                     }
@@ -74,19 +74,22 @@ struct RelationField: View {
 
     var body: some View {
         HStack(spacing: 4) {
+            Menu {
+                ForEach(Relations.known, id: \.rel) { k in Button("\(k.rel) — \(k.out)") { set(k.rel) } }
+            } label: {
+                Image(systemName: "chevron.up.chevron.down")
+                    .frame(width: 36, height: 32)
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .accessibilityLabel("Known relations")
             CommitTextField("relation", value: rel) { text in
                 let n = Relations.normalize(text)
                 set(n.isEmpty ? Relations.defaultRel : n)
             }
             .frame(minWidth: 90)
-            Menu {
-                ForEach(Relations.known, id: \.rel) { k in Button("\(k.rel) — \(k.out)") { set(k.rel) } }
-            } label: {
-                Image(systemName: "chevron.up.chevron.down")
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .accessibilityLabel("Known relations")
         }
     }
 }
