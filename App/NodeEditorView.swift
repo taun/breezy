@@ -133,14 +133,14 @@ struct NodeEditorView: View {
     /// Typing in landscape on iPhone leaves only a sliver above the on-screen keyboard: the controls step aside so
     /// the text gets all of it, and return when the keyboard goes (Done, or drag the text down). iPhone only: a short
     /// iPad window (Stage Manager, Slide Over) is usually typed into with a hardware keyboard.
-    static func hidesControls(isPhone: Bool, bodyFocused: Bool, shortSpace: Bool) -> Bool {
+    nonisolated static func hidesControls(isPhone: Bool, bodyFocused: Bool, shortSpace: Bool) -> Bool {
         isPhone && bodyFocused && shortSpace
     }
 
     /// Based on the height actually left, so a hardware keyboard (even with its shortcut bar on a small iPhone in
     /// landscape, about 267pt), portrait or a roomy window never counts; the on-screen keyboard in landscape leaves
     /// about 150pt (190pt on the largest iPhones).
-    static func isShortSpace(_ height: CGFloat) -> Bool { height < 220 }
+    nonisolated static func isShortSpace(_ height: CGFloat) -> Bool { height < 220 }
 
     /// The tab picker and any validation issues, at the top of every tab.
     private var tabHeader: some View {

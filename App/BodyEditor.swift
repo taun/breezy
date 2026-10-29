@@ -19,6 +19,9 @@ struct BodyEditor: View {
 
     var body: some View {
         editor
+            #if os(iOS)
+            .background(TextKit1())
+            #endif
             .onChange(of: local) { _, v in if v != text { text = v } }
             // Changes from elsewhere (sync, conflict resolution, another node).
             .onChange(of: text) { _, v in if v != local { local = v } }
@@ -61,3 +64,36 @@ private struct SelectionRestoringEditor: View {
         return TextSelection(range: lo..<hi)
     }
 }
+
+#if os(iOS)
+/// Switches the editor's text view to TextKit 1. TextKit 2 lays out a long text lazily and estimates the height of the
+/// rest, and the estimate shifts while typing: in a short editor (iPhone landscape), Return at the end of a long body
+/// sometimes scrolled to a stale end, past the text, leaving the editor blank or the cursor's line out of view.
+/// TextKit 1 lays out the whole text, so following the cursor lands on it. SwiftUI's TextEditor does not expose its
+/// text view, so this finds it: the nearest one around this background view, which is the editor's.
+private struct TextKit1: UIViewRepresentable {
+    func makeUIView(context: Context) -> Finder { Finder() }
+    func updateUIView(_ view: Finder, context: Context) { view.setNeedsLayout() }
+
+    final class Finder: UIView {
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            var ancestor = superview
+            while let a = ancestor {
+                if let textView = Self.textView(in: a) {
+                    // Reading layoutManager is what switches a TextKit 2 text view to TextKit 1.
+                    if textView.textLayoutManager != nil { _ = textView.layoutManager }
+                    return
+                }
+                ancestor = a.superview
+            }
+        }
+
+        private static func textView(in view: UIView) -> UITextView? {
+            if let t = view as? UITextView { return t }
+            for sub in view.subviews { if let t = textView(in: sub) { return t } }
+            return nil
+        }
+    }
+}
+#endif
