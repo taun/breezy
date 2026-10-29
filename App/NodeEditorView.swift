@@ -10,8 +10,6 @@ struct NodeEditorView: View {
     @AppStorage("editor.preview") private var showPreview = false
     @AppStorage("editor.focus") private var focusRaw = ""
     @FocusState private var focus: Field?
-    /// The cursor is put back once per opened node, not again when a tab change rebuilds the form.
-    @State private var restoredFocus = false
 
     // The selected tab, restored on relaunch.
     @AppStorage("editor.tab") private var tabRaw = Tab.title.rawValue
@@ -147,6 +145,9 @@ struct NodeEditorView: View {
 
     var body: some View {
         if let node {
+            // The form's identity changes with the tab (below); the restore task and focus handler sit on this
+            // container instead, so they run once per opened node rather than on every tab change.
+            VStack(spacing: 0) {
             // One grouped form for every tab: the same background throughout, and the controls scroll with the content.
             Form {
                 Section {
@@ -170,21 +171,19 @@ struct NodeEditorView: View {
             .id("\(tab.rawValue)|\(showPreview)")
             // Dragging the page (reading back through a long body) only dismisses the keyboard when dragged into it.
             .scrollDismissesKeyboard(.interactively)
+            }
             .onChange(of: focus) { _, f in
                 // Leaving the app also clears focus; only record changes made while in use.
                 if scenePhase == .active { focusRaw = f.map { "\(slug)|\($0.rawValue)" } ?? "" }
             }
             .task {
                 // Put the cursor back where it was, on the tab that holds it.
-                guard !restoredFocus else { return }
                 let parts = focusRaw.split(separator: "|")
                 guard parts.count == 2, parts[0] == slug, let f = Field(rawValue: String(parts[1])) else { return }
                 if f == .body && showPreview { return }
                 tabRaw = (f == .body ? Tab.body : Tab.title).rawValue
                 try? await Task.sleep(for: .milliseconds(150))
-                guard !Task.isCancelled else { return } // the tab change above restarts this task; that run restores
                 focus = f
-                restoredFocus = true
             }
             .navigationTitle(node.title)
             .toolbar {

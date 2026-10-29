@@ -97,8 +97,9 @@ private struct PreviewImage: View {
     private var identity: String { "\(workspace?.branch ?? "")|\(image.src)|\(workspace?.assetSHA(image.src) ?? "")" }
     @State private var shownIdentity: String?
 
-    /// Also changes when images are stored (a sync fetched them), so a placeholder is tried again.
-    private var key: String { "\(identity)|\(workspace?.storedImages ?? 0)" }
+    /// Bumped when the network returns while this shows a placeholder, to load again.
+    @State private var retry = 0
+    private var key: String { "\(identity)|\(retry)" }
 
     var body: some View {
         Group {
@@ -112,6 +113,11 @@ private struct PreviewImage: View {
         }
         .frame(maxWidth: .infinity)
         .accessibilityLabel(image.alt.isEmpty ? "Image" : image.alt)
+        // A sync stored images: a placeholder looks on the device again (no download, nothing in flight cancelled).
+        .onChange(of: workspace?.storedImages) {
+            if picture == nil, webURL == nil, let data = workspace?.imageData(image.src) { picture = Self.picture(data) }
+        }
+        .onChange(of: model.isOnline) { _, online in if online && picture == nil { retry += 1 } }
         .task(id: key) {
             // This view can be reused for another image (blocks are identified by position).
             if shownIdentity != identity { picture = nil; shownIdentity = identity }
