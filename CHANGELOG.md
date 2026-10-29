@@ -4,10 +4,6 @@ All notable changes to Breezy are documented here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
-### Fixed
-
-- **Crash opening Settings on the Mac** (#10): after reverting an edit, opening Settings could quit the app with a SwiftUI environment assertion. Every sheet now receives the app's model explicitly. The cause could not be reproduced without the second half of the crash report, so please confirm.
-
 ### Added
 
 - **Editor tabs** (#11): the node editor shows one section at a time — Title, Date, Links, Media, Body — chosen with a segmented control at the top. Each tab has a header naming it and the same grouped look. The Body tab's editor fills the screen (or the Mac window, down to its bottom edge) and scrolls itself, keeping the cursor in view as you type; on iPhone in landscape, the tab and Edit/Preview controls step aside while you type with the on-screen keyboard, and return when it is dismissed (Done in the navigation bar, or drag the text down). The selected tab is restored on relaunch.
@@ -28,6 +24,7 @@ All notable changes to Breezy are documented here. The format follows [Keep a Ch
 
 ### Fixed
 
+- **Crash opening Settings on the Mac** (#10): after reverting an edit, opening Settings could quit the app with a SwiftUI environment assertion. Every sheet now receives the app's model explicitly. The cause could not be reproduced without the second half of the crash report, so please confirm.
 - **Date defaults to today** (#8): switching a date from Year to Day starts the day picker at today (when the year is the current one) instead of January 1.
 - **Body editor:** the cursor no longer jumps back while typing (typing "Hello" gave "ElloH") (#7).
 - **Body editor in iPhone landscape:** pressing Return at the end of a long body sometimes scrolled the editor past the text, leaving it blank or the cursor's line out of view. The editor now lays out the whole text, so it follows the cursor reliably.

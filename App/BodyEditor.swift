@@ -20,7 +20,7 @@ struct BodyEditor: View {
     var body: some View {
         editor
             #if os(iOS)
-            .background(TextKit1())
+            .background(TextKit1(edits: local.utf16.count))
             #endif
             .onChange(of: local) { _, v in if v != text { text = v } }
             // Changes from elsewhere (sync, conflict resolution, another node).
@@ -70,28 +70,47 @@ private struct SelectionRestoringEditor: View {
 /// rest, and the estimate shifts while typing: in a short editor (iPhone landscape), Return at the end of a long body
 /// sometimes scrolled to a stale end, past the text, leaving the editor blank or the cursor's line out of view.
 /// TextKit 1 lays out the whole text, so following the cursor lands on it. SwiftUI's TextEditor does not expose its
-/// text view, so this finds it: the nearest one around this background view, which is the editor's.
+/// text view, so this finds it: the nearest one around this background view that covers the same area. If none is
+/// found (a future SwiftUI that renders differently), the editor keeps working as before.
 private struct TextKit1: UIViewRepresentable {
+    /// Changes with every edit, so the check runs again if SwiftUI replaced the text view or it was not there yet.
+    let edits: Int
+
     func makeUIView(context: Context) -> Finder { Finder() }
-    func updateUIView(_ view: Finder, context: Context) { view.setNeedsLayout() }
+    func updateUIView(_ view: Finder, context: Context) { view.switchTextView() }
 
     final class Finder: UIView {
+        private weak var switched: UITextView?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            // The text view may join the hierarchy after this view: check again once this layout pass is done.
+            DispatchQueue.main.async { [weak self] in self?.switchTextView() }
+        }
+
         override func layoutSubviews() {
             super.layoutSubviews()
+            switchTextView()
+        }
+
+        func switchTextView() {
+            guard window != nil, !(switched?.window != nil && switched?.textLayoutManager == nil) else { return }
+            let area = convert(bounds, to: nil)
             var ancestor = superview
             while let a = ancestor {
-                if let textView = Self.textView(in: a) {
+                if let textView = Self.textView(in: a, covering: area) {
                     // Reading layoutManager is what switches a TextKit 2 text view to TextKit 1.
                     if textView.textLayoutManager != nil { _ = textView.layoutManager }
+                    switched = textView
                     return
                 }
                 ancestor = a.superview
             }
         }
 
-        private static func textView(in view: UIView) -> UITextView? {
-            if let t = view as? UITextView { return t }
-            for sub in view.subviews { if let t = textView(in: sub) { return t } }
+        private static func textView(in view: UIView, covering area: CGRect) -> UITextView? {
+            if let t = view as? UITextView, t.convert(t.bounds, to: nil).intersects(area) { return t }
+            for sub in view.subviews { if let t = textView(in: sub, covering: area) { return t } }
             return nil
         }
     }
