@@ -10,7 +10,8 @@ All notable changes to Breezy are documented here. The format follows [Keep a Ch
 
 ### Added
 
-- **Editor tabs** (#11): the node editor shows one section at a time — Basics, Date, Links, Media, Body — chosen with a segmented control at the top. At compact width (iPhone, narrow iPad windows) the segments are symbols, with the selected tab's name under them and the names read by VoiceOver, and at the large size on iOS 26 and later so each is a full-size touch target (#17). The Body tab's Edit/Preview control matches. The Body tab gives the text editor the whole screen and scrolls with the cursor as you type. The selected tab is restored on relaunch.
+- **Editor tabs** (#11): the node editor shows one section at a time — Basics, Date, Links, Media, Body — chosen with a segmented control at the top. The Body tab gives the text editor the whole screen and scrolls with the cursor as you type. The selected tab is restored on relaunch.
+- **Symbol tabs on iPhone** (#17): at compact width (iPhone, narrow iPad windows) the editor tabs are symbols, with the selected tab's name under them and the names read by VoiceOver. The tabs and the Body tab's Edit/Preview control use the large size on iOS 26 and later, so each segment is a full-size touch target.
 - **Easier link relations** (#12): the relation menu is now at the left of each link, with a wider tap area.
 - **File issues from Breezy** (#9): Settings › File an Issue… takes a type (Bug or Enhancement), title and description, and an Execute switch that adds the `execute` label so Claude implements it. The token must also cover taun/breezy with Issues read and write; otherwise the error says what to change. The draft is kept if the app is closed.
 - **App version in Settings** (#6): the bottom of Settings shows "Breezy 1.0.0 (build N)" in small secondary text.

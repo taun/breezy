@@ -42,6 +42,9 @@ struct NodeEditorView: View {
 
     /// Compact width (iPhone, narrow iPad windows): symbol tabs, and segmented controls at the large size so each
     /// segment is a full-size touch target (iOS 26 and later; earlier versions keep the standard height).
+    /// Shared by the tab and Edit/Preview pickers so the two stay the same height.
+    private var segmentSize: ControlSize { compact ? .large : .regular }
+
     private var compact: Bool {
         #if os(iOS)
         sizeClass == .compact
@@ -64,7 +67,7 @@ struct NodeEditorView: View {
             }
             .labelsHidden()
             .pickerStyle(.segmented)
-            .controlSize(compact ? .large : .regular)
+            .controlSize(segmentSize)
             if compact {
                 Text(tab.rawValue).font(.caption).foregroundStyle(.secondary).accessibilityHidden(true)
             }
@@ -127,7 +130,7 @@ struct NodeEditorView: View {
         }
         .pickerStyle(.segmented)
         .labelsHidden()
-        .controlSize(compact ? .large : .regular) // same height as the tab picker above it
+        .controlSize(segmentSize)
         .padding(.horizontal)
         .padding(.bottom, 8)
         if showPreview {
