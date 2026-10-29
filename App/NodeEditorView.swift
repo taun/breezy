@@ -164,6 +164,8 @@ struct NodeEditorView: View {
                 if scenePhase == .active { focusRaw = f.map { "\(slug)|\($0.rawValue)" } ?? "" }
             }
             .task {
+                // A stored name that is no longer a tab (renamed or removed) is replaced by the Basics fallback.
+                if Tab(rawValue: tabRaw) == nil { tabRaw = Tab.basics.rawValue }
                 // Put the cursor back where it was, on the tab that holds it.
                 let parts = focusRaw.split(separator: "|")
                 guard parts.count == 2, parts[0] == slug, let f = Field(rawValue: String(parts[1])) else { return }
