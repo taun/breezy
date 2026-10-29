@@ -15,6 +15,7 @@ struct NodeEditorView: View {
     @AppStorage("editor.tab") private var tabRaw = Tab.title.rawValue
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     #endif
 
     enum Field: String { case title, summary, body }
@@ -119,26 +120,60 @@ struct NodeEditorView: View {
         }
     }
 
-    /// The editor grows with its text instead of scrolling itself, so the whole tab scrolls as one and the controls
-    /// above it move out of the way (landscape on iPhone leaves little height otherwise).
-    @ViewBuilder private func bodySection(_ node: NodeFile) -> some View {
-        Section("Body") {
-            Picker("Body", selection: $showPreview) {
-                Text("Edit").tag(false)
-                Text("Preview").tag(true)
+    /// Typing in landscape on iPhone leaves only a sliver above the keyboard: the controls step aside until the
+    /// keyboard goes away, so the text gets all of it.
+    private var controlsHidden: Bool {
+        #if os(iOS)
+        verticalSizeClass == .compact && focus == .body
+        #else
+        false
+        #endif
+    }
+
+    /// The Body tab fills the screen (or window) and the editor scrolls itself, keeping the cursor in view as one
+    /// types. Not a Form: a form row that grows with the text made the page jump (iPhone landscape) and overflowed
+    /// the window on the Mac. Styled like the other tabs' grouped forms.
+    @ViewBuilder private func bodyTab(_ node: NodeFile) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if !controlsHidden {
+                VStack(alignment: .leading, spacing: 8) {
+                    tabPicker
+                    issuesBanner
+                }
+                .padding(.vertical, 8)
+                GroupedStyle.header("Body")
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .controlSize(segmentSize)
-            if showPreview {
-                MarkdownPreview(node: node, workspace: workspace)
-            } else {
-                BodyEditor(text: Binding(get: { node.body }, set: { v in edit { $0.setBody(v) } }), slug: slug)
-                    .focused($focus, equals: .body)
-                    .font(.body.monospaced())
-                    .modifier(BodyEditorSizing())
+            VStack(spacing: 0) {
+                if !controlsHidden {
+                    Picker("Body", selection: $showPreview) {
+                        Text("Edit").tag(false)
+                        Text("Preview").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .controlSize(segmentSize)
+                    .padding(12)
+                    Divider().padding(.horizontal, 12)
+                }
+                if showPreview {
+                    ScrollView { MarkdownPreview(node: node, workspace: workspace).padding() }
+                } else {
+                    BodyEditor(text: Binding(get: { node.body }, set: { v in edit { $0.setBody(v) } }), slug: slug)
+                        .focused($focus, equals: .body)
+                        .font(.body.monospaced())
+                        .scrollContentBackground(.hidden)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                }
             }
+            .frame(maxHeight: .infinity)
+            .background(GroupedStyle.card, in: RoundedRectangle(cornerRadius: GroupedStyle.cornerRadius))
+            .padding(.bottom, controlsHidden ? 0 : 8)
         }
+        .padding(.horizontal, GroupedStyle.margin)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(GroupedStyle.page)
+        .animation(.default, value: controlsHidden)
     }
 
     private var node: NodeFile? { workspace.nodes[slug] }
@@ -148,7 +183,10 @@ struct NodeEditorView: View {
             // The form's identity changes with the tab (below); the restore task and focus handler sit on this
             // container instead, so they run once per opened node rather than on every tab change.
             VStack(spacing: 0) {
-            // One grouped form for every tab: the same background throughout, and the controls scroll with the content.
+            if tab == .body {
+                bodyTab(node)
+            } else {
+            // A grouped form for the other tabs: the tab picker is its first row and scrolls with the fields.
             Form {
                 Section {
                     VStack(spacing: 8) {
@@ -163,14 +201,14 @@ struct NodeEditorView: View {
                 case .date: DateSection(date: node.date) { new in edit { try $0.setDate(new) } }
                 case .links: LinkEditorView(workspace: workspace, slug: slug)
                 case .media: media(node)
-                case .body: bodySection(node)
+                case .body: EmptyView() // shown by bodyTab
                 }
             }
             .formStyle(.grouped)
-            // Each tab, and Edit or Preview, opens at the top rather than at the other one's scroll position.
-            .id("\(tab.rawValue)|\(showPreview)")
-            // Dragging the page (reading back through a long body) only dismisses the keyboard when dragged into it.
+            // Each tab opens at the top rather than at the last tab's scroll position.
+            .id(tab)
             .scrollDismissesKeyboard(.interactively)
+            }
             }
             .onChange(of: focus) { _, f in
                 // Leaving the app also clears focus; only record changes made while in use.
@@ -207,19 +245,36 @@ struct NodeEditorView: View {
     }
 }
 
-/// iOS 18 and later: the editor grows with its text and the form scrolls as one (checked on iOS 26.5). iOS 17's
-/// TextEditor stops growing partway through a long body, and a non-scrolling text view on the Mac does not grow, so
-/// those keep the editor's own scrolling at a fixed height.
-private struct BodyEditorSizing: ViewModifier {
-    func body(content: Content) -> some View {
+/// The look of a grouped form, for the Body tab, which is not a Form.
+private enum GroupedStyle {
+    #if os(iOS)
+    static let page = Color(uiColor: .systemGroupedBackground)
+    static let card = Color(uiColor: .secondarySystemGroupedBackground)
+    static let margin: CGFloat = 16
+    static var cornerRadius: CGFloat { if #available(iOS 26, *) { 26 } else { 10 } }
+    #else
+    static let page = Color(nsColor: .windowBackgroundColor)
+    static let card = Color(nsColor: .textBackgroundColor)
+    static let margin: CGFloat = 20
+    static let cornerRadius: CGFloat = 8
+    #endif
+
+    /// A section header like the forms' ("Body").
+    static func header(_ title: String) -> some View {
         #if os(iOS)
-        if #available(iOS 18, *) {
-            content.scrollDisabled(true).frame(minHeight: 200)
-        } else {
-            content.frame(height: 420)
+        Group {
+            if #available(iOS 26, *) {
+                Text(title).font(.subheadline.weight(.semibold))
+            } else {
+                Text(title).font(.footnote).textCase(.uppercase)
+            }
         }
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 20)
+        .padding(.top, 6)
+        .padding(.bottom, 8)
         #else
-        content.frame(minHeight: 480)
+        Text(title).font(.headline).padding(.horizontal, 4).padding(.bottom, 6)
         #endif
     }
 }
