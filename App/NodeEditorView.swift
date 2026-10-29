@@ -85,6 +85,7 @@ struct NodeEditorView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal) // in line with the field text below
         }
     }
 
@@ -135,13 +136,7 @@ struct NodeEditorView: View {
                 BodyEditor(text: Binding(get: { node.body }, set: { v in edit { $0.setBody(v) } }), slug: slug)
                     .focused($focus, equals: .body)
                     .font(.body.monospaced())
-                    #if os(iOS)
-                    .scrollDisabled(true)
-                    .frame(minHeight: 200)
-                    #else
-                    // The Mac has the height, and a non-scrolling text view there does not grow with its text.
-                    .frame(minHeight: 480)
-                    #endif
+                    .modifier(BodyEditorSizing())
             }
         }
     }
@@ -169,6 +164,9 @@ struct NodeEditorView: View {
                 }
             }
             .formStyle(.grouped)
+            .id(tab) // each tab opens at the top, not at the last tab's scroll position
+            // Dragging the page (reading back through a long body) only dismisses the keyboard when dragged into it.
+            .scrollDismissesKeyboard(.interactively)
             .onChange(of: focus) { _, f in
                 // Leaving the app also clears focus; only record changes made while in use.
                 if scenePhase == .active { focusRaw = f.map { "\(slug)|\($0.rawValue)" } ?? "" }
@@ -200,6 +198,23 @@ struct NodeEditorView: View {
 
     private func edit(_ change: (inout NodeFile) throws -> Void) {
         do { try workspace.update(slug, change) } catch { model.errorMessage = error.localizedDescription }
+    }
+}
+
+/// iOS 18 and later: the editor grows with its text and the form scrolls as one (checked on iOS 26.5). iOS 17's
+/// TextEditor stops growing partway through a long body, and a non-scrolling text view on the Mac does not grow, so
+/// those keep the editor's own scrolling at a fixed height.
+private struct BodyEditorSizing: ViewModifier {
+    func body(content: Content) -> some View {
+        #if os(iOS)
+        if #available(iOS 18, *) {
+            content.scrollDisabled(true).frame(minHeight: 200)
+        } else {
+            content.frame(height: 420)
+        }
+        #else
+        content.frame(minHeight: 480)
+        #endif
     }
 }
 
