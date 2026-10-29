@@ -152,11 +152,11 @@ struct Harness {
 /// Regression: in iPhone landscape the editor's controls must step aside only while typing leaves a sliver of height
 /// (the on-screen keyboard up). Hiding them on focus alone left them hidden for good with a hardware keyboard.
 @Suite struct BodyControlsTests {
-    @Test func hideOnlyWhileTypingInAShortSpace() {
-        #expect(NodeEditorView.hidesControls(bodyFocused: true, availableHeight: 150)) // landscape, keyboard up
-        #expect(!NodeEditorView.hidesControls(bodyFocused: true, availableHeight: 330)) // landscape, hardware keyboard
-        #expect(!NodeEditorView.hidesControls(bodyFocused: true, availableHeight: 420)) // portrait, keyboard up
-        #expect(!NodeEditorView.hidesControls(bodyFocused: false, availableHeight: 150))
+    @Test func onlyTheOnScreenKeyboardInLandscapeIsAShortSpace() {
+        #expect(NodeEditorView.isShortSpace(150)) // landscape, keyboard up
+        #expect(NodeEditorView.isShortSpace(190)) // largest iPhones, landscape, keyboard up
+        #expect(!NodeEditorView.isShortSpace(267)) // small iPhone, landscape, hardware keyboard with shortcut bar
+        #expect(!NodeEditorView.isShortSpace(420)) // portrait, keyboard up
     }
 }
 

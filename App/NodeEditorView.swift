@@ -16,8 +16,9 @@ struct NodeEditorView: View {
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
-    /// The height the Body tab has, keyboard excluded (it shrinks while the on-screen keyboard is up).
-    @State private var bodyHeight: CGFloat = .infinity
+    /// Whether the Body tab has only a sliver of height (it shrinks while the on-screen keyboard is up). A Bool, so
+    /// state changes only when the threshold is crossed, not on every frame of a keyboard drag.
+    @State private var shortSpace = false
 
     enum Field: String { case title, summary, body }
 
@@ -121,14 +122,21 @@ struct NodeEditorView: View {
         }
     }
 
-    private var controlsHidden: Bool { Self.hidesControls(bodyFocused: focus == .body, availableHeight: bodyHeight) }
-
     /// Typing in landscape on iPhone leaves only a sliver above the on-screen keyboard: the controls step aside so
-    /// the text gets all of it, and return when the keyboard goes (Done, or drag the text down). Based on the height
-    /// actually left, so a hardware keyboard, portrait or a roomy window never hides them.
-    static func hidesControls(bodyFocused: Bool, availableHeight: CGFloat) -> Bool {
-        bodyFocused && availableHeight < 260
+    /// the text gets all of it, and return when the keyboard goes (Done, or drag the text down). iOS only; the Mac has
+    /// no on-screen keyboard and keeps its controls.
+    private var controlsHidden: Bool {
+        #if os(iOS)
+        focus == .body && shortSpace
+        #else
+        false
+        #endif
     }
+
+    /// Based on the height actually left, so a hardware keyboard (even with its shortcut bar on a small iPhone in
+    /// landscape, about 267pt), portrait or a roomy window never counts; the on-screen keyboard in landscape leaves
+    /// about 150pt (190pt on the largest iPhones).
+    static func isShortSpace(_ height: CGFloat) -> Bool { height < 220 }
 
     /// The tab picker and any validation issues, at the top of every tab.
     private var tabHeader: some View {
@@ -179,7 +187,7 @@ struct NodeEditorView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(GroupedStyle.page)
         .animation(.default, value: controlsHidden)
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { bodyHeight = $0 }
+        .onGeometryChange(for: Bool.self) { Self.isShortSpace($0.size.height) } action: { shortSpace = $0 }
     }
 
     private var node: NodeFile? { workspace.nodes[slug] }
@@ -229,10 +237,13 @@ struct NodeEditorView: View {
             }
             .navigationTitle(node.title)
             .toolbar {
+                #if os(iOS)
                 if tab == .body && controlsHidden {
-                    // The controls are hidden while typing in a short space; this puts the keyboard away and brings them back.
-                    ToolbarItem(placement: .confirmationAction) { Button("Done") { focus = nil } }
+                    // The controls are hidden while typing in a short space; this puts the keyboard away and brings
+                    // them back. A plain placement: a confirmation action could take the Return key from the text.
+                    ToolbarItem(placement: .topBarTrailing) { Button("Done") { focus = nil } }
                 }
+                #endif
                 if workspace.isModified(slug) {
                     ToolbarItem { Button("Revert") { try? workspace.revert(slug) } }
                 }
