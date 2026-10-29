@@ -183,6 +183,7 @@ struct NodeEditorView: View {
                 if f == .body && showPreview { return }
                 tabRaw = (f == .body ? Tab.body : Tab.title).rawValue
                 try? await Task.sleep(for: .milliseconds(150))
+                guard !Task.isCancelled else { return } // the node was closed
                 focus = f
             }
             .navigationTitle(node.title)

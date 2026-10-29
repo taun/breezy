@@ -123,7 +123,8 @@ private struct PreviewImage: View {
             if shownIdentity != identity { picture = nil; shownIdentity = identity }
             guard picture == nil, webURL == nil, let workspace else { return }
             let data = if let client = model.client { try? await workspace.loadImage(image.src, client: client) } else { workspace.imageData(image.src) }
-            picture = data.flatMap(Self.picture)
+            // Only ever fills in: a late failure must not clear a picture a sync supplied meanwhile.
+            if let loaded = data.flatMap(Self.picture) { picture = loaded }
         }
     }
 
