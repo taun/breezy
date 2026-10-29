@@ -34,8 +34,9 @@ jobs:
 
   upload:
     needs: test
-    # Also runs when the tests were skipped (the Execute workflow has just run them).
-    if: ${{ !cancelled() && !failure() }}
+    # Only after the tests passed, or were skipped (the Execute workflow has just run them). A cancelled test job
+    # (for example no macOS runner was available) must not let an untested build through.
+    if: ${{ !cancelled() && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
     runs-on: macos-26
     timeout-minutes: 45
     outputs:
