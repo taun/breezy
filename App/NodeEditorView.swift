@@ -10,6 +10,8 @@ struct NodeEditorView: View {
     @AppStorage("editor.preview") private var showPreview = false
     @AppStorage("editor.focus") private var focusRaw = ""
     @FocusState private var focus: Field?
+    /// The cursor is put back once per opened node, not again when a tab change rebuilds the form.
+    @State private var restoredFocus = false
 
     // The selected tab, restored on relaunch.
     @AppStorage("editor.tab") private var tabRaw = Tab.title.rawValue
@@ -174,11 +176,14 @@ struct NodeEditorView: View {
             }
             .task {
                 // Put the cursor back where it was, on the tab that holds it.
+                guard !restoredFocus else { return }
+                restoredFocus = true
                 let parts = focusRaw.split(separator: "|")
                 guard parts.count == 2, parts[0] == slug, let f = Field(rawValue: String(parts[1])) else { return }
                 if f == .body && showPreview { return }
                 tabRaw = (f == .body ? Tab.body : Tab.title).rawValue
                 try? await Task.sleep(for: .milliseconds(150))
+                guard !Task.isCancelled else { return }
                 focus = f
             }
             .navigationTitle(node.title)

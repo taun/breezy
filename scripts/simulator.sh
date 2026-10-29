@@ -43,15 +43,15 @@ BRANCH="${BREEZY_BRANCH:-$(git -C "$SITE" branch --show-current)}"
 import hashlib, json, os, subprocess, sys
 root, site, branch = sys.argv[1:4]
 os.makedirs(f"{root}/objects", exist_ok=True)
+def blob_sha(data): return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()  # git blob id
 files = {}
 for name in sorted(os.listdir(f"{site}/src/nodes")):
     if not name.endswith(".md"):
         continue
     data = open(f"{site}/src/nodes/{name}", "rb").read()
-    sha = hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()  # git blob id
+    sha = blob_sha(data)
     open(f"{root}/objects/{sha}", "wb").write(data)
     files[f"src/nodes/{name}"] = sha
-def blob_sha(data): return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
 # Asset shas for all of src/assets; image contents only for the images the nodes show, as a sync would keep them.
 asset_shas = {}
 for d, _, fs in os.walk(f"{site}/src/assets"):

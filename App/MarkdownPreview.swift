@@ -93,8 +93,11 @@ private struct PreviewImage: View {
         return src.hasPrefix("http://") || src.hasPrefix("https://") ? URL(string: src) : nil
     }
 
-    /// Changes when the image this src names changes: another branch, or its sha becoming known after a sync.
-    private var key: String { "\(workspace?.branch ?? "")|\(image.src)|\(workspace?.assetSHA(image.src) ?? "")" }
+    /// Changes when the image this src names changes (another branch, or its sha becoming known after a sync), and
+    /// when the network comes back, so an image that could not be fetched offline is tried again.
+    private var key: String {
+        "\(workspace?.branch ?? "")|\(image.src)|\(workspace?.assetSHA(image.src) ?? "")|\(model.isOnline)"
+    }
 
     var body: some View {
         Group {
