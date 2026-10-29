@@ -21,6 +21,8 @@ public final class SiteWorkspace {
     /// base + queue, by slug: what working edits are compared against.
     private var committedText: [String: String] = [:]
     public private(set) var isSyncing = false
+    /// Counts images stored on the device, so an open preview showing a placeholder can try again.
+    public private(set) var storedImages = 0
 
     public static let nodesDir = "src/nodes/"
     static let assetsDir = "src/assets/"
@@ -408,6 +410,7 @@ public final class SiteWorkspace {
         if let data = store.objectData(sha) { return data }
         let data = try await client.blobData(sha)
         try store.storeObjectData(data, sha: sha)
+        storedImages += 1
         return data
     }
 
@@ -424,7 +427,9 @@ public final class SiteWorkspace {
             index += chunk.count
             await withTaskGroup(of: (String, Data?).self) { group in
                 for sha in chunk { group.addTask { (sha, try? await client.blobData(sha)) } }
-                for await (sha, data) in group { if let data { try? store.storeObjectData(data, sha: sha) } }
+                for await (sha, data) in group {
+                    if let data, (try? store.storeObjectData(data, sha: sha)) != nil { storedImages += 1 }
+                }
             }
         }
     }

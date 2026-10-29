@@ -554,3 +554,16 @@ func client(_ m: MockTransport) -> GitHubClient { GitHubClient(repo: RepoRef(own
         #expect(!ws.hasAsset("/assets/images/missing.png"))
     }
 }
+
+extension ImageTests {
+    /// An open preview showing a placeholder reloads when a sync stores images.
+    @Test func storingImagesIsObservable() async throws {
+        let m = Self.siteWithImage()
+        let ws = try await SiteWorkspace.download("main", client: client(m), store: tempStore())
+        #expect(ws.storedImages == 0)
+        _ = try await ws.sync(client: client(m))
+        #expect(ws.storedImages == 1)
+        _ = try await ws.sync(client: client(m))
+        #expect(ws.storedImages == 1) // nothing new
+    }
+}

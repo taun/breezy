@@ -93,11 +93,12 @@ private struct PreviewImage: View {
         return src.hasPrefix("http://") || src.hasPrefix("https://") ? URL(string: src) : nil
     }
 
-    /// Changes when the image this src names changes (another branch, or its sha becoming known after a sync), and
-    /// when the network comes back, so an image that could not be fetched offline is tried again.
-    private var key: String {
-        "\(workspace?.branch ?? "")|\(image.src)|\(workspace?.assetSHA(image.src) ?? "")|\(model.isOnline)"
-    }
+    /// Which image this is: another branch, or its sha becoming known after a sync, makes it a different one.
+    private var identity: String { "\(workspace?.branch ?? "")|\(image.src)|\(workspace?.assetSHA(image.src) ?? "")" }
+    @State private var shownIdentity: String?
+
+    /// Also changes when images are stored (a sync fetched them), so a placeholder is tried again.
+    private var key: String { "\(identity)|\(workspace?.storedImages ?? 0)" }
 
     var body: some View {
         Group {
@@ -112,8 +113,9 @@ private struct PreviewImage: View {
         .frame(maxWidth: .infinity)
         .accessibilityLabel(image.alt.isEmpty ? "Image" : image.alt)
         .task(id: key) {
-            picture = nil // this view can be reused for another image (blocks are identified by position)
-            guard webURL == nil, let workspace else { return }
+            // This view can be reused for another image (blocks are identified by position).
+            if shownIdentity != identity { picture = nil; shownIdentity = identity }
+            guard picture == nil, webURL == nil, let workspace else { return }
             let data = if let client = model.client { try? await workspace.loadImage(image.src, client: client) } else { workspace.imageData(image.src) }
             picture = data.flatMap(Self.picture)
         }

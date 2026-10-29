@@ -177,14 +177,14 @@ struct NodeEditorView: View {
             .task {
                 // Put the cursor back where it was, on the tab that holds it.
                 guard !restoredFocus else { return }
-                restoredFocus = true
                 let parts = focusRaw.split(separator: "|")
                 guard parts.count == 2, parts[0] == slug, let f = Field(rawValue: String(parts[1])) else { return }
                 if f == .body && showPreview { return }
                 tabRaw = (f == .body ? Tab.body : Tab.title).rawValue
                 try? await Task.sleep(for: .milliseconds(150))
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled else { return } // the tab change above restarts this task; that run restores
                 focus = f
+                restoredFocus = true
             }
             .navigationTitle(node.title)
             .toolbar {
