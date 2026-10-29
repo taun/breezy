@@ -85,16 +85,22 @@ private struct PreviewImage: View {
     @Environment(AppModel.self) private var model
     let image: MarkdownImage
     let workspace: SiteWorkspace?
-    /// Decoded once per src, not on every render.
-    @State private var picture: Image?
+    /// Decoded once per image, not on every render, with its size so small images are not stretched.
+    @State private var picture: (image: Image, size: CGSize)?
 
-    private var isWeb: Bool { image.src.hasPrefix("http://") || image.src.hasPrefix("https://") }
+    private var webURL: URL? {
+        let src = image.src.hasPrefix("//") ? "https:" + image.src : image.src // protocol-relative
+        return src.hasPrefix("http://") || src.hasPrefix("https://") ? URL(string: src) : nil
+    }
+
+    /// Changes when the image this src names changes: another branch, or its sha becoming known after a sync.
+    private var key: String { "\(workspace?.branch ?? "")|\(image.src)|\(workspace?.assetSHA(image.src) ?? "")" }
 
     var body: some View {
         Group {
             if let picture {
-                picture.resizable().scaledToFit()
-            } else if isWeb, let url = URL(string: image.src) {
+                picture.image.resizable().scaledToFit().frame(maxWidth: picture.size.width)
+            } else if let url = webURL {
                 AsyncImage(url: url) { $0.resizable().scaledToFit() } placeholder: { placeholder(missing: false) }
             } else {
                 placeholder(missing: workspace.map { !$0.hasAsset(image.src) } ?? false)
@@ -102,9 +108,9 @@ private struct PreviewImage: View {
         }
         .frame(maxWidth: .infinity)
         .accessibilityLabel(image.alt.isEmpty ? "Image" : image.alt)
-        .task(id: image.src) {
+        .task(id: key) {
             picture = nil // this view can be reused for another image (blocks are identified by position)
-            guard !isWeb, let workspace else { return }
+            guard webURL == nil, let workspace else { return }
             let data = if let client = model.client { try? await workspace.loadImage(image.src, client: client) } else { workspace.imageData(image.src) }
             picture = data.flatMap(Self.picture)
         }
@@ -118,11 +124,11 @@ private struct PreviewImage: View {
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private static func picture(_ data: Data) -> Image? {
+    private static func picture(_ data: Data) -> (image: Image, size: CGSize)? {
         #if os(iOS)
-        UIImage(data: data).map(Image.init(uiImage:))
+        UIImage(data: data).map { (Image(uiImage: $0), $0.size) }
         #else
-        NSImage(data: data).map(Image.init(nsImage:))
+        NSImage(data: data).map { (Image(nsImage: $0), $0.size) }
         #endif
     }
 }

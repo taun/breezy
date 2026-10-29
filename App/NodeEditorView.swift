@@ -164,7 +164,8 @@ struct NodeEditorView: View {
                 }
             }
             .formStyle(.grouped)
-            .id(tab) // each tab opens at the top, not at the last tab's scroll position
+            // Each tab, and Edit or Preview, opens at the top rather than at the other one's scroll position.
+            .id("\(tab.rawValue)|\(showPreview)")
             // Dragging the page (reading back through a long body) only dismisses the keyboard when dragged into it.
             .scrollDismissesKeyboard(.interactively)
             .onChange(of: focus) { _, f in

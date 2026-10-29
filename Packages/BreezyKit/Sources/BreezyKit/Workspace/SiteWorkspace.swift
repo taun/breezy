@@ -392,7 +392,7 @@ public final class SiteWorkspace {
 
     /// The blob sha of an image the preview shows, by its site path ("/assets/…"), or nil if this branch has no such
     /// asset (or the copy predates asset shas and has not synced since).
-    func assetSHA(_ path: String) -> String? {
+    public func assetSHA(_ path: String) -> String? {
         state.base.assetSHAs?[MarkdownImage.sitePath(path)]
     }
 
