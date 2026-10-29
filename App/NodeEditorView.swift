@@ -69,7 +69,8 @@ struct NodeEditorView: View {
             .labelsHidden()
             .pickerStyle(.segmented)
             .controlSize(segmentSize)
-            if compact {
+            // Not on Body: the editor needs the height more than the highlighted segment needs a name.
+            if compact && tab != .body {
                 Text(tab.rawValue).font(.caption).foregroundStyle(.secondary).accessibilityHidden(true)
             }
         }
