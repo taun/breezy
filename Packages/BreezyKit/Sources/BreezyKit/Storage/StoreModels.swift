@@ -21,11 +21,15 @@ public struct Snapshot: Codable, Equatable, Sendable {
     public var commit: String
     public var files: [String: String]
     public var assets: [String]
+    /// Asset site path ("/assets/…") -> git blob sha, so the images a node shows can be fetched and cached by sha.
+    /// Optional for older state files; sync fills it in.
+    public var assetSHAs: [String: String]?
 
-    public init(commit: String, files: [String: String], assets: [String]) {
+    public init(commit: String, files: [String: String], assets: [String], assetSHAs: [String: String]? = nil) {
         self.commit = commit
         self.files = files
         self.assets = assets
+        self.assetSHAs = assetSHAs
     }
 }
 

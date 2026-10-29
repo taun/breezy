@@ -69,11 +69,16 @@ public struct GitHubClient: Sendable {
     }
 
     public func blobText(_ sha: String) async throws -> String {
+        guard let text = String(data: try await blobData(sha), encoding: .utf8) else { throw GitHubError.invalidResponse }
+        return text
+    }
+
+    /// A blob's bytes, for files that are not text (images).
+    public func blobData(_ sha: String) async throws -> Data {
         let json = try await object("GET", "/git/blobs/\(sha)")
         guard let b64 = json["content"] as? String,
-              let data = Data(base64Encoded: b64, options: .ignoreUnknownCharacters),
-              let text = String(data: data, encoding: .utf8) else { throw GitHubError.invalidResponse }
-        return text
+              let data = Data(base64Encoded: b64, options: .ignoreUnknownCharacters) else { throw GitHubError.invalidResponse }
+        return data
     }
 
     /// Commits all changes as one commit on `branch`, refusing if the branch head is no longer `expectedHead`.

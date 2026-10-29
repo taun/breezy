@@ -149,6 +149,18 @@ struct Harness {
     }
 }
 
+/// Images on a line of their own are shown as pictures in the preview; one inside a sentence stays inline text.
+@Suite struct PreviewImageTests {
+    @Test func standaloneImageLineBecomesAnImageBlock() {
+        let blocks = MarkdownPreview.blocks("Intro\n\n![lego](/assets/images/big-lego-512.png){.align-right}\nNext ![x](/a.png) inline")
+        #expect(blocks == [
+            .paragraph("Intro"),
+            .image(MarkdownImage(alt: "lego", src: "/assets/images/big-lego-512.png")),
+            .paragraph("Next ![x](/a.png) inline"),
+        ])
+    }
+}
+
 @MainActor @Suite struct OfflineTests {
     /// Offline: the app keeps working from the local copy, commits wait, and they are pushed when back online.
     @Test func offlineCommitsWaitAndPushWhenBackOnline() async throws {

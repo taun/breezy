@@ -131,7 +131,7 @@ struct NodeEditorView: View {
             .labelsHidden()
             .controlSize(segmentSize)
             if showPreview {
-                MarkdownPreview(node: node)
+                MarkdownPreview(node: node, workspace: workspace)
             } else {
                 BodyEditor(text: Binding(get: { node.body }, set: { v in edit { $0.setBody(v) } }), slug: slug)
                     .focused($focus, equals: .body)

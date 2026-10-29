@@ -2,9 +2,11 @@ import BreezyKit
 import SwiftUI
 
 /// A native approximation of the node page: chips and dates from front matter, then the Markdown body rendered
-/// block by block (headings, lists, quotes, code, paragraphs) with inline Markdown. Not pixel-exact with the site.
+/// block by block (headings, lists, quotes, code, images, paragraphs) with inline Markdown. Not pixel-exact with the
+/// site. Images come from the branch's assets (via `workspace`), kept on the device once fetched.
 struct MarkdownPreview: View {
     let node: NodeFile
+    var workspace: SiteWorkspace?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -22,7 +24,7 @@ struct MarkdownPreview: View {
     }
 
     enum Block: Equatable {
-        case heading(Int, String), paragraph(String), bullet(String), quote(String), code(String), rule
+        case heading(Int, String), paragraph(String), bullet(String), quote(String), code(String), image(MarkdownImage), rule
     }
 
     @ViewBuilder
@@ -36,12 +38,13 @@ struct MarkdownPreview: View {
             .overlay(alignment: .leading) { Rectangle().fill(.tertiary).frame(width: 3) }
         case let .code(text): Text(text).font(.callout.monospaced()).padding(8)
             .frame(maxWidth: .infinity, alignment: .leading).background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+        case let .image(image): PreviewImage(image: image, workspace: workspace)
         case .rule: Divider()
         }
     }
 
     private func inline(_ text: String) -> Text {
-        // Images become a visible placeholder; the site serves them, the app does not fetch them.
+        // An image inside a line of text stays a placeholder; one on a line of its own is an .image block.
         let shown = text.replacingOccurrences(of: #"!\[([^\]]*)\]\(([^)\s]+)[^)]*\)(\{[^}]*\})?"#, with: "🖼 $1 ($2)", options: .regularExpression)
         let attributed = (try? AttributedString(markdown: shown, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
             ?? AttributedString(shown)
@@ -67,10 +70,57 @@ struct MarkdownPreview: View {
             if let m = line.firstMatch(of: /^(?:[-*+]|\d+\.)\s+(.*)$/) { flush(); out.append(.bullet(String(m.1))); continue }
             if line.hasPrefix(">") { flush(); out.append(.quote(String(line.dropFirst()).trimmingCharacters(in: .whitespaces))); continue }
             if line == "---" || line == "***" { flush(); out.append(.rule); continue }
+            if let image = MarkdownImage.standalone(line) { flush(); out.append(.image(image)); continue }
             para.append(line)
         }
         if let c = code { out.append(.code(c.joined(separator: "\n"))) }
         flush()
         return out
+    }
+}
+
+/// One image of the preview: from the device if it is there, otherwise fetched once from GitHub and kept. Offline
+/// and not yet fetched, or not an asset of this branch, it shows a labeled placeholder instead.
+private struct PreviewImage: View {
+    @Environment(AppModel.self) private var model
+    let image: MarkdownImage
+    let workspace: SiteWorkspace?
+    @State private var data: Data?
+
+    private var isWeb: Bool { image.src.hasPrefix("http://") || image.src.hasPrefix("https://") }
+
+    var body: some View {
+        Group {
+            if let picture = data.flatMap(Self.picture) {
+                picture.resizable().scaledToFit()
+            } else if isWeb, let url = URL(string: image.src) {
+                AsyncImage(url: url) { $0.resizable().scaledToFit() } placeholder: { placeholder(missing: false) }
+            } else {
+                placeholder(missing: workspace.map { !$0.hasAsset(image.src) } ?? false)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityLabel(image.alt.isEmpty ? "Image" : image.alt)
+        .task(id: image.src) {
+            guard !isWeb, let workspace else { return }
+            data = workspace.imageData(image.src)
+            if data == nil, let client = model.client { data = try? await workspace.loadImage(image.src, client: client) }
+        }
+    }
+
+    private func placeholder(missing: Bool) -> some View {
+        Label(missing ? "Missing image: \(image.src)" : "\(image.alt) (\(image.src))",
+              systemImage: missing ? "exclamationmark.triangle" : "photo")
+            .font(.callout)
+            .foregroundStyle(missing ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private static func picture(_ data: Data) -> Image? {
+        #if os(iOS)
+        UIImage(data: data).map(Image.init(uiImage:))
+        #else
+        NSImage(data: data).map(Image.init(nsImage:))
+        #endif
     }
 }

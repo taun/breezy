@@ -478,3 +478,66 @@ func client(_ m: MockTransport) -> GitHubClient { GitHubClient(repo: RepoRef(own
         #expect(ws.changes.map(\.path) == ["src/nodes/a.md", "src/nodes/b.md"]) // a edited, b deleted
     }
 }
+
+@Suite struct MarkdownImageTests {
+    @Test func findsImagesAndIgnoresAttributes() {
+        let text = "Intro ![lego](/assets/images/big-lego-512.png){.align-right} and ![](/assets/a.gif \"t\")"
+        #expect(MarkdownImage.all(in: text) == [
+            MarkdownImage(alt: "lego", src: "/assets/images/big-lego-512.png"),
+            MarkdownImage(alt: "", src: "/assets/a.gif"),
+        ])
+    }
+
+    @Test func standaloneOnlyWhenTheImageIsTheWholeLine() {
+        #expect(MarkdownImage.standalone("  ![lego](/assets/l.png){.align-right} ") == MarkdownImage(alt: "lego", src: "/assets/l.png"))
+        #expect(MarkdownImage.standalone("See ![lego](/assets/l.png)") == nil)
+    }
+}
+
+/// The preview shows a node's images from the branch's own assets, kept on the device so it works offline.
+@MainActor @Suite struct ImageTests {
+    static let png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+
+    /// Node a shows src/assets/images/x.png (blob bx).
+    static func siteWithImage() -> MockTransport {
+        let m = MockTransport.site()
+        let a = "---\ntitle: \"A\"\ntype: person\nlinks: [b]\n---\n\n![x](/assets/images/x.png){.align-right}\n"
+        m.on("GET /git/blobs/ba", ["content": Data(a.utf8).base64EncodedString(), "encoding": "base64"])
+        m.on("GET /git/blobs/bx", ["content": png.base64EncodedString(), "encoding": "base64"])
+        return m
+    }
+
+    @Test func downloadKeepsReferencedImagesForOfflinePreview() async throws {
+        let m = Self.siteWithImage()
+        let store = tempStore()
+        let ws = try await SiteWorkspace.download("main", client: client(m), store: store)
+        #expect(m.count("GET /git/blobs/bx") == 1)
+        // Reopened from disk, with no client: still there.
+        let reopened = try #require(try SiteWorkspace.open("main", store: store))
+        #expect(reopened.imageData("/assets/images/x.png") == Self.png)
+        #expect(ws.hasAsset("/assets/images/x.png"))
+        _ = try await ws.sync(client: client(m))
+        #expect(m.count("GET /git/blobs/bx") == 1) // not fetched again
+    }
+
+    @Test func unknownPathIsNotAnAsset() async throws {
+        let ws = try await SiteWorkspace.download("main", client: client(Self.siteWithImage()), store: tempStore())
+        #expect(!ws.hasAsset("/assets/images/missing.png"))
+        #expect(try await ws.loadImage("/assets/images/missing.png", client: client(Self.siteWithImage())) == nil)
+    }
+
+    @Test func copiesFromOlderBuildsGetAssetShasAtSync() async throws {
+        let m = Self.siteWithImage()
+        let store = tempStore()
+        _ = try await SiteWorkspace.download("main", client: client(m), store: store)
+        var old = try #require(store.branchState(named: "main"))
+        old.base.assetSHAs = nil // as saved before assets had shas
+        try store.saveBranchState(old)
+        let ws = try #require(try SiteWorkspace.open("main", store: store))
+        #expect(ws.imageData("/assets/images/x.png") == nil)
+        #expect(ws.hasAsset("/assets/images/missing.png")) // unknown yet, so not flagged
+        _ = try await ws.sync(client: client(m))
+        #expect(ws.imageData("/assets/images/x.png") == Self.png)
+        #expect(!ws.hasAsset("/assets/images/missing.png"))
+    }
+}

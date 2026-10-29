@@ -54,7 +54,9 @@ public final class SiteWorkspace {
         let snapshot = try await fetchSnapshot(branch, client: client, store: store, progress: progress)
         let state = BranchState(branch: branch, base: snapshot, existsOnRemote: true, fetchedAt: .now)
         try store.saveBranchState(state)
-        return try SiteWorkspace(store: store, state: state)
+        let workspace = try SiteWorkspace(store: store, state: state)
+        await workspace.prefetchImages(client: client)
+        return workspace
     }
 
     /// The node files and assets at the branch head, downloading any file contents not already stored.
@@ -81,8 +83,14 @@ public final class SiteWorkspace {
             return out
         }
         for (sha, text) in texts { try store.storeObject(text, sha: sha) }
-        let assets = entries.filter { $0.isBlob && $0.path.hasPrefix(assetsDir) }.map { "/" + $0.path.dropFirst("src/".count) }.sorted()
-        return Snapshot(commit: commit, files: Dictionary(uniqueKeysWithValues: nodeEntries.map { ($0.path, $0.sha) }), assets: assets)
+        let assetSHAs = assetSHAs(entries)
+        return Snapshot(commit: commit, files: Dictionary(uniqueKeysWithValues: nodeEntries.map { ($0.path, $0.sha) }),
+                        assets: assetSHAs.keys.sorted(), assetSHAs: assetSHAs)
+    }
+
+    /// Site path ("/assets/…") -> blob sha of every file under src/assets.
+    static func assetSHAs(_ entries: [TreeEntry]) -> [String: String] {
+        Dictionary(entries.filter { $0.isBlob && $0.path.hasPrefix(assetsDir) }.map { ("/" + $0.path.dropFirst("src/".count), $0.sha) }) { a, _ in a }
     }
 
     // MARK: Queries
@@ -335,6 +343,8 @@ public final class SiteWorkspace {
             pushed += 1
         }
         await fillMissingFileDates(client: client)
+        await fillMissingAssetSHAs(client: client)
+        await prefetchImages(client: client)
         if let publishedBranch { await refreshPublished(publishedBranch, client: client) }
         state.fetchedAt = .now
         try store.saveBranchState(state)
@@ -378,6 +388,52 @@ public final class SiteWorkspace {
             }
         }
         state.fileDates = (state.fileDates ?? [:]).merging(found) { $1 }
+    }
+
+    // MARK: Images
+
+    /// The blob sha of an image the preview shows, by its site path ("/assets/…"), or nil if this branch has no such
+    /// asset (or the copy predates asset shas and has not synced since).
+    func assetSHA(_ path: String) -> String? {
+        state.base.assetSHAs?[path.hasPrefix("/") ? path : "/" + path]
+    }
+
+    /// Whether the path names an asset on this branch (as far as this copy knows).
+    public func hasAsset(_ path: String) -> Bool { assetSHA(path) != nil || state.base.assetSHAs == nil }
+
+    /// The image's bytes if they are on this device. Works offline.
+    public func imageData(_ path: String) -> Data? { assetSHA(path).flatMap(store.objectData) }
+
+    /// The image's bytes, downloading and keeping them if they are not on this device yet. nil if not an asset here.
+    public func loadImage(_ path: String, client: GitHubClient) async throws -> Data? {
+        guard let sha = assetSHA(path) else { return nil }
+        if let data = store.objectData(sha) { return data }
+        let data = try await client.blobData(sha)
+        try store.storeObjectData(data, sha: sha)
+        return data
+    }
+
+    /// Downloads every image the nodes show that is not on this device yet, so previews work offline. Only the
+    /// referenced ones: the site's assets folder is much larger. Best effort, four at a time; misses are tried again.
+    func prefetchImages(client: GitHubClient) async {
+        let shas = Set(nodes.values.flatMap { MarkdownImage.all(in: $0.body) }.compactMap { assetSHA($0.src) })
+            .filter { !store.hasObject($0) }.sorted()
+        var index = 0
+        while index < shas.count {
+            let chunk = shas[index..<min(index + 4, shas.count)]
+            index += chunk.count
+            await withTaskGroup(of: (String, Data?).self) { group in
+                for sha in chunk { group.addTask { (sha, try? await client.blobData(sha)) } }
+                for await (sha, data) in group { if let data { try? store.storeObjectData(data, sha: sha) } }
+            }
+        }
+    }
+
+    /// Copies saved before assets had shas get them from the base commit's tree (one request), once.
+    func fillMissingAssetSHAs(client: GitHubClient) async {
+        guard state.base.assetSHAs == nil, let entries = try? await client.tree(ofCommit: state.base.commit) else { return }
+        state.base.assetSHAs = Self.assetSHAs(entries)
+        try? store.saveBranchState(state)
     }
 
     /// Paths GitHub changed since the base that were also changed here (queued, edited or deleted).

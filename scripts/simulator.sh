@@ -51,11 +51,23 @@ for name in sorted(os.listdir(f"{site}/src/nodes")):
     sha = hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()  # git blob id
     open(f"{root}/objects/{sha}", "wb").write(data)
     files[f"src/nodes/{name}"] = sha
-assets = sorted("/" + os.path.relpath(os.path.join(d, f), f"{site}/src")
-                for d, _, fs in os.walk(f"{site}/src/assets") for f in fs if not f.startswith("."))
+def blob_sha(data): return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+# Asset shas for all of src/assets; image contents only for the images the nodes show, as a sync would keep them.
+asset_shas = {}
+for d, _, fs in os.walk(f"{site}/src/assets"):
+    for f in fs:
+        if not f.startswith("."):
+            asset_shas["/" + os.path.relpath(os.path.join(d, f), f"{site}/src")] = blob_sha(open(os.path.join(d, f), "rb").read())
+assets = sorted(asset_shas)
+import re
+for name in os.listdir(f"{site}/src/nodes"):
+    if name.endswith(".md"):
+        for src in re.findall(r"!\[[^\]]*\]\(([^)\s]+)", open(f"{site}/src/nodes/{name}", encoding="utf-8").read()):
+            if src in asset_shas:
+                open(f"{root}/objects/{asset_shas[src]}", "wb").write(open(f"{site}/src{src}", "rb").read())
 head = subprocess.check_output(["git", "-C", site, "rev-parse", "HEAD"]).decode().strip()
 os.makedirs(f"{root}/branches/{branch}", exist_ok=True)
-json.dump({"version": 1, "branch": branch, "base": {"commit": head, "files": files, "assets": assets},
+json.dump({"version": 1, "branch": branch, "base": {"commit": head, "files": files, "assets": assets, "assetSHAs": asset_shas},
            "existsOnRemote": True, "deleted": [], "conflicts": []}, open(f"{root}/branches/{branch}/state.json", "w"))
 json.dump({"defaultBranch": "main", "remoteBranches": sorted({"main", branch}), "lastBranch": branch},
           open(f"{root}/repo.json", "w"))

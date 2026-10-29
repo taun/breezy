@@ -3,7 +3,7 @@ import Foundation
 /// The on-device copy of one repository, as plain files that stay readable in Finder / the Files app:
 ///
 ///     <root>/repo.json                         RepoState
-///     <root>/objects/<blob-sha>                node file contents as fetched (shared by all branches)
+///     <root>/objects/<blob-sha>                node file contents as fetched, and images the nodes show (shared by all branches)
 ///     <root>/branches/<branch>/state.json      BranchState
 ///     <root>/branches/<branch>/queue.json      [QueuedCommit], oldest first
 ///     <root>/branches/<branch>/working/<slug>.md   uncommitted edits (edited or new nodes only)
@@ -53,6 +53,13 @@ public struct LocalStore: Sendable {
         let sha = known ?? GitBlob.sha(of: text)
         if !hasObject(sha) { try writeText(text, to: objectURL(sha)) }
         return sha
+    }
+
+    public func objectData(_ sha: String) -> Data? { try? Data(contentsOf: objectURL(sha)) }
+
+    /// Stores a binary blob (an image) under GitHub's sha; no-op if present.
+    public func storeObjectData(_ data: Data, sha: String) throws {
+        if !hasObject(sha) { try writeData(data, to: objectURL(sha)) }
     }
 
     // MARK: Branches
@@ -141,8 +148,10 @@ public struct LocalStore: Sendable {
         try Self.encoder.encode(value).write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
 
-    private func writeText(_ text: String, to url: URL) throws {
+    private func writeText(_ text: String, to url: URL) throws { try writeData(Data(text.utf8), to: url) }
+
+    private func writeData(_ data: Data, to url: URL) throws {
         try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Data(text.utf8).write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
 }

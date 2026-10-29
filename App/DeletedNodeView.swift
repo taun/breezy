@@ -24,7 +24,7 @@ struct DeletedNodeView: View {
                         Label("Undelete", systemImage: "arrow.uturn.backward")
                     }
                 }
-                Section("Last content") { MarkdownPreview(node: node) }
+                Section("Last content") { MarkdownPreview(node: node, workspace: workspace) }
             }
             .formStyle(.grouped)
             .navigationTitle(node.title)
