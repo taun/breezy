@@ -30,7 +30,7 @@ struct NodeEditorView: View {
         /// Shown instead of the name where five names do not fit (compact width: iPhone, narrow iPad windows).
         var symbol: String {
             switch self {
-            case .title: "info.circle"
+            case .title: "textformat"
             case .date: "calendar"
             case .links: "link"
             case .media: "photo.on.rectangle"
@@ -135,8 +135,13 @@ struct NodeEditorView: View {
                 BodyEditor(text: Binding(get: { node.body }, set: { v in edit { $0.setBody(v) } }), slug: slug)
                     .focused($focus, equals: .body)
                     .font(.body.monospaced())
+                    #if os(iOS)
                     .scrollDisabled(true)
                     .frame(minHeight: 200)
+                    #else
+                    // The Mac has the height, and a non-scrolling text view there does not grow with its text.
+                    .frame(minHeight: 480)
+                    #endif
             }
         }
     }

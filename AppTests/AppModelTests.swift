@@ -145,11 +145,7 @@ struct Harness {
     @Test func unknownTabFallsBackToTitle() {
         #expect(NodeEditorView.Tab(stored: "Notes") == .title)
         #expect(NodeEditorView.Tab(stored: "") == .title)
-    }
-
-    /// The first tab was called Basics; a value stored by those builds opens its replacement.
-    @Test func formerBasicsTabOpensTitle() {
-        #expect(NodeEditorView.Tab(stored: "Basics") == .title)
+        #expect(NodeEditorView.Tab(stored: "Basics") == .title) // the first tab's former name
     }
 }
 
