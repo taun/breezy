@@ -16,6 +16,8 @@ struct NodeEditorView: View {
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
+    /// Whether the on-screen keyboard is up (not with a hardware keyboard).
+    @State private var keyboardShown = false
     #endif
 
     enum Field: String { case title, summary, body }
@@ -120,14 +122,28 @@ struct NodeEditorView: View {
         }
     }
 
-    /// Typing in landscape on iPhone leaves only a sliver above the keyboard: the controls step aside until the
-    /// keyboard goes away, so the text gets all of it.
     private var controlsHidden: Bool {
         #if os(iOS)
-        verticalSizeClass == .compact && focus == .body
+        Self.hidesControls(compactHeight: verticalSizeClass == .compact, bodyFocused: focus == .body, keyboardShown: keyboardShown)
         #else
         false
         #endif
+    }
+
+    /// Typing in landscape on iPhone leaves only a sliver above the keyboard: the controls step aside while the
+    /// on-screen keyboard is up, so the text gets all of it, and return when it goes away (drag the text down). Never
+    /// without the on-screen keyboard (a hardware keyboard, or focus restored before it appears): nothing could bring
+    /// the controls back.
+    static func hidesControls(compactHeight: Bool, bodyFocused: Bool, keyboardShown: Bool) -> Bool {
+        compactHeight && bodyFocused && keyboardShown
+    }
+
+    /// The tab picker and any validation issues, at the top of every tab.
+    private var tabHeader: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            tabPicker
+            issuesBanner
+        }
     }
 
     /// The Body tab fills the screen (or window) and the editor scrolls itself, keeping the cursor in view as one
@@ -136,11 +152,7 @@ struct NodeEditorView: View {
     @ViewBuilder private func bodyTab(_ node: NodeFile) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             if !controlsHidden {
-                VStack(alignment: .leading, spacing: 8) {
-                    tabPicker
-                    issuesBanner
-                }
-                .padding(.vertical, 8)
+                tabHeader.padding(.vertical, 8)
                 GroupedStyle.header("Body")
             }
             VStack(spacing: 0) {
@@ -162,11 +174,16 @@ struct NodeEditorView: View {
                         .focused($focus, equals: .body)
                         .font(.body.monospaced())
                         .scrollContentBackground(.hidden)
+                        .scrollDismissesKeyboard(.interactively) // drag the text down to put the keyboard (and controls) away
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                 }
             }
+            #if os(macOS)
+            .frame(minHeight: 160, maxHeight: .infinity) // a short window still leaves some lines to edit
+            #else
             .frame(maxHeight: .infinity)
+            #endif
             .background(GroupedStyle.card, in: RoundedRectangle(cornerRadius: GroupedStyle.cornerRadius))
             .padding(.bottom, controlsHidden ? 0 : 8)
         }
@@ -174,6 +191,10 @@ struct NodeEditorView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(GroupedStyle.page)
         .animation(.default, value: controlsHidden)
+        #if os(iOS)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardShown = true }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardShown = false }
+        #endif
     }
 
     private var node: NodeFile? { workspace.nodes[slug] }
@@ -189,10 +210,7 @@ struct NodeEditorView: View {
             // A grouped form for the other tabs: the tab picker is its first row and scrolls with the fields.
             Form {
                 Section {
-                    VStack(spacing: 8) {
-                        tabPicker
-                        issuesBanner
-                    }
+                    tabHeader
                     .listRowBackground(Color.clear)
                     .listRowInsets(EdgeInsets())
                 }
@@ -201,7 +219,7 @@ struct NodeEditorView: View {
                 case .date: DateSection(date: node.date) { new in edit { try $0.setDate(new) } }
                 case .links: LinkEditorView(workspace: workspace, slug: slug)
                 case .media: media(node)
-                case .body: EmptyView() // shown by bodyTab
+                case .body: EmptyView() // never: the Body tab is bodyTab (the switch must still be exhaustive)
                 }
             }
             .formStyle(.grouped)

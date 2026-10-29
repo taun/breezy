@@ -149,6 +149,17 @@ struct Harness {
     }
 }
 
+/// Regression: in iPhone landscape the editor's controls hid on body focus alone, so with a hardware keyboard (or
+/// focus restored before the keyboard appeared) nothing could bring them back.
+@Suite struct BodyControlsTests {
+    @Test func hideOnlyWhileTypingInCompactHeightWithTheOnScreenKeyboard() {
+        #expect(NodeEditorView.hidesControls(compactHeight: true, bodyFocused: true, keyboardShown: true))
+        #expect(!NodeEditorView.hidesControls(compactHeight: true, bodyFocused: true, keyboardShown: false)) // hardware keyboard
+        #expect(!NodeEditorView.hidesControls(compactHeight: false, bodyFocused: true, keyboardShown: true)) // portrait
+        #expect(!NodeEditorView.hidesControls(compactHeight: true, bodyFocused: false, keyboardShown: true))
+    }
+}
+
 /// Images on a line of their own are shown as pictures in the preview; one inside a sentence stays inline text.
 @Suite struct PreviewImageTests {
     @Test func standaloneImageLineBecomesAnImageBlock() {
