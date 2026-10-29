@@ -47,6 +47,8 @@ A macOS / iOS / iPadOS app (SwiftUI, multiplatform) for editing the content of t
 
 **Before analyzing or changing anything, check the repo is current:** `git status`, `git fetch origin`, `git log HEAD..origin/main`. GitHub Actions and Claude in the cloud (issues labeled `execute`) commit to `main`, so a local checkout falls behind without anyone working in it. Pull (`--ff-only`, clean tree) before reading code or proposing changes.
 
+**Before every push:** run the tests (`scripts/test.sh`, both kit and app) and `/code-review` on the changes being pushed, and fix what either finds: failing tests, and review findings (or say why one does not apply). Re-run both after the fixes, and push only when the tests pass and the review is clean.
+
 ```
 scripts/test.sh [kit|app]       # BreezyKit tests (swift test; `kit --filter X` passes args) and the app tests (macOS)
 scripts/build.sh [macos|ios]    # xcodegen generate + unsigned builds for macOS and/or the iOS Simulator
