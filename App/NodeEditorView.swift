@@ -122,15 +122,19 @@ struct NodeEditorView: View {
         }
     }
 
-    /// Typing in landscape on iPhone leaves only a sliver above the on-screen keyboard: the controls step aside so
-    /// the text gets all of it, and return when the keyboard goes (Done, or drag the text down). iOS only; the Mac has
-    /// no on-screen keyboard and keeps its controls.
     private var controlsHidden: Bool {
         #if os(iOS)
-        focus == .body && shortSpace
+        Self.hidesControls(isPhone: UIDevice.current.userInterfaceIdiom == .phone, bodyFocused: focus == .body, shortSpace: shortSpace)
         #else
-        false
+        false // the Mac has no on-screen keyboard and keeps its controls
         #endif
+    }
+
+    /// Typing in landscape on iPhone leaves only a sliver above the on-screen keyboard: the controls step aside so
+    /// the text gets all of it, and return when the keyboard goes (Done, or drag the text down). iPhone only: a short
+    /// iPad window (Stage Manager, Slide Over) is usually typed into with a hardware keyboard.
+    static func hidesControls(isPhone: Bool, bodyFocused: Bool, shortSpace: Bool) -> Bool {
+        isPhone && bodyFocused && shortSpace
     }
 
     /// Based on the height actually left, so a hardware keyboard (even with its shortcut bar on a small iPhone in
@@ -187,7 +191,9 @@ struct NodeEditorView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(GroupedStyle.page)
         .animation(.default, value: controlsHidden)
+        #if os(iOS)
         .onGeometryChange(for: Bool.self) { Self.isShortSpace($0.size.height) } action: { shortSpace = $0 }
+        #endif
     }
 
     private var node: NodeFile? { workspace.nodes[slug] }
@@ -238,7 +244,7 @@ struct NodeEditorView: View {
             .navigationTitle(node.title)
             .toolbar {
                 #if os(iOS)
-                if tab == .body && controlsHidden {
+                if controlsHidden {
                     // The controls are hidden while typing in a short space; this puts the keyboard away and brings
                     // them back. A plain placement: a confirmation action could take the Return key from the text.
                     ToolbarItem(placement: .topBarTrailing) { Button("Done") { focus = nil } }

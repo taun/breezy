@@ -158,6 +158,13 @@ struct Harness {
         #expect(!NodeEditorView.isShortSpace(267)) // small iPhone, landscape, hardware keyboard with shortcut bar
         #expect(!NodeEditorView.isShortSpace(420)) // portrait, keyboard up
     }
+
+    @Test func onlyWhileTypingTheBodyOnAnIPhone() {
+        #expect(NodeEditorView.hidesControls(isPhone: true, bodyFocused: true, shortSpace: true))
+        #expect(!NodeEditorView.hidesControls(isPhone: false, bodyFocused: true, shortSpace: true)) // short iPad window
+        #expect(!NodeEditorView.hidesControls(isPhone: true, bodyFocused: false, shortSpace: true))
+        #expect(!NodeEditorView.hidesControls(isPhone: true, bodyFocused: true, shortSpace: false))
+    }
 }
 
 /// Images on a line of their own are shown as pictures in the preview; one inside a sentence stays inline text.
