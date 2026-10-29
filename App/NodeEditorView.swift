@@ -15,10 +15,9 @@ struct NodeEditorView: View {
     @AppStorage("editor.tab") private var tabRaw = Tab.title.rawValue
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
-    @Environment(\.verticalSizeClass) private var verticalSizeClass
-    /// Whether the on-screen keyboard is up (not with a hardware keyboard).
-    @State private var keyboardShown = false
     #endif
+    /// The height the Body tab has, keyboard excluded (it shrinks while the on-screen keyboard is up).
+    @State private var bodyHeight: CGFloat = .infinity
 
     enum Field: String { case title, summary, body }
 
@@ -122,20 +121,13 @@ struct NodeEditorView: View {
         }
     }
 
-    private var controlsHidden: Bool {
-        #if os(iOS)
-        Self.hidesControls(compactHeight: verticalSizeClass == .compact, bodyFocused: focus == .body, keyboardShown: keyboardShown)
-        #else
-        false
-        #endif
-    }
+    private var controlsHidden: Bool { Self.hidesControls(bodyFocused: focus == .body, availableHeight: bodyHeight) }
 
-    /// Typing in landscape on iPhone leaves only a sliver above the keyboard: the controls step aside while the
-    /// on-screen keyboard is up, so the text gets all of it, and return when it goes away (drag the text down). Never
-    /// without the on-screen keyboard (a hardware keyboard, or focus restored before it appears): nothing could bring
-    /// the controls back.
-    static func hidesControls(compactHeight: Bool, bodyFocused: Bool, keyboardShown: Bool) -> Bool {
-        compactHeight && bodyFocused && keyboardShown
+    /// Typing in landscape on iPhone leaves only a sliver above the on-screen keyboard: the controls step aside so
+    /// the text gets all of it, and return when the keyboard goes (Done, or drag the text down). Based on the height
+    /// actually left, so a hardware keyboard, portrait or a roomy window never hides them.
+    static func hidesControls(bodyFocused: Bool, availableHeight: CGFloat) -> Bool {
+        bodyFocused && availableHeight < 260
     }
 
     /// The tab picker and any validation issues, at the top of every tab.
@@ -174,16 +166,12 @@ struct NodeEditorView: View {
                         .focused($focus, equals: .body)
                         .font(.body.monospaced())
                         .scrollContentBackground(.hidden)
-                        .scrollDismissesKeyboard(.interactively) // drag the text down to put the keyboard (and controls) away
+                        .scrollDismissesKeyboard(.interactively) // drag the text down to put the keyboard away
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                 }
             }
-            #if os(macOS)
-            .frame(minHeight: 160, maxHeight: .infinity) // a short window still leaves some lines to edit
-            #else
             .frame(maxHeight: .infinity)
-            #endif
             .background(GroupedStyle.card, in: RoundedRectangle(cornerRadius: GroupedStyle.cornerRadius))
             .padding(.bottom, controlsHidden ? 0 : 8)
         }
@@ -191,10 +179,7 @@ struct NodeEditorView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(GroupedStyle.page)
         .animation(.default, value: controlsHidden)
-        #if os(iOS)
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardShown = true }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardShown = false }
-        #endif
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { bodyHeight = $0 }
     }
 
     private var node: NodeFile? { workspace.nodes[slug] }
@@ -244,6 +229,10 @@ struct NodeEditorView: View {
             }
             .navigationTitle(node.title)
             .toolbar {
+                if tab == .body && controlsHidden {
+                    // The controls are hidden while typing in a short space; this puts the keyboard away and brings them back.
+                    ToolbarItem(placement: .confirmationAction) { Button("Done") { focus = nil } }
+                }
                 if workspace.isModified(slug) {
                     ToolbarItem { Button("Revert") { try? workspace.revert(slug) } }
                 }

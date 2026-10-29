@@ -149,14 +149,14 @@ struct Harness {
     }
 }
 
-/// Regression: in iPhone landscape the editor's controls hid on body focus alone, so with a hardware keyboard (or
-/// focus restored before the keyboard appeared) nothing could bring them back.
+/// Regression: in iPhone landscape the editor's controls must step aside only while typing leaves a sliver of height
+/// (the on-screen keyboard up). Hiding them on focus alone left them hidden for good with a hardware keyboard.
 @Suite struct BodyControlsTests {
-    @Test func hideOnlyWhileTypingInCompactHeightWithTheOnScreenKeyboard() {
-        #expect(NodeEditorView.hidesControls(compactHeight: true, bodyFocused: true, keyboardShown: true))
-        #expect(!NodeEditorView.hidesControls(compactHeight: true, bodyFocused: true, keyboardShown: false)) // hardware keyboard
-        #expect(!NodeEditorView.hidesControls(compactHeight: false, bodyFocused: true, keyboardShown: true)) // portrait
-        #expect(!NodeEditorView.hidesControls(compactHeight: true, bodyFocused: false, keyboardShown: true))
+    @Test func hideOnlyWhileTypingInAShortSpace() {
+        #expect(NodeEditorView.hidesControls(bodyFocused: true, availableHeight: 150)) // landscape, keyboard up
+        #expect(!NodeEditorView.hidesControls(bodyFocused: true, availableHeight: 330)) // landscape, hardware keyboard
+        #expect(!NodeEditorView.hidesControls(bodyFocused: true, availableHeight: 420)) // portrait, keyboard up
+        #expect(!NodeEditorView.hidesControls(bodyFocused: false, availableHeight: 150))
     }
 }
 
