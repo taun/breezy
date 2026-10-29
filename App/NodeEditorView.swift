@@ -22,21 +22,52 @@ struct NodeEditorView: View {
     enum Tab: String, CaseIterable, Identifiable {
         case basics = "Basics", date = "Date", links = "Links", media = "Media", body = "Body"
         var id: String { rawValue }
+
+        /// Shown instead of the name where five names do not fit (compact width: iPhone, narrow iPad windows).
+        var symbol: String {
+            switch self {
+            case .basics: "info.circle"
+            case .date: "calendar"
+            case .links: "link"
+            case .media: "photo.on.rectangle"
+            case .body: "text.alignleft"
+            }
+        }
     }
 
     private var tab: Tab { Tab(rawValue: tabRaw) ?? .basics }
 
-    @ViewBuilder private var tabPicker: some View {
-        let picker = Picker("Section", selection: $tabRaw) {
-            ForEach(Tab.allCases) { Text($0.rawValue).tag($0.rawValue) }
-        }
-        .labelsHidden()
-        Group {
-            #if os(iOS)
-            if sizeClass == .compact { picker.pickerStyle(.menu) } else { picker.pickerStyle(.segmented) }
-            #else
-            picker.pickerStyle(.segmented)
-            #endif
+    /// Typed, so a stored name that is no longer a tab still selects the Basics segment it falls back to.
+    private var tabBinding: Binding<Tab> { Binding(get: { tab }, set: { tabRaw = $0.rawValue }) }
+
+    /// Compact width (iPhone, narrow iPad windows): symbol tabs, and segmented controls at the large size so each
+    /// segment is a full-size touch target (iOS 26 and later; earlier versions keep the standard height).
+    private var compact: Bool {
+        #if os(iOS)
+        sizeClass == .compact
+        #else
+        false
+        #endif
+    }
+
+    /// Segmented everywhere, like Edit/Preview (issue #17); symbols at compact width, with the selected tab's name
+    /// under them, and names elsewhere.
+    private var tabPicker: some View {
+        VStack(spacing: 4) {
+            Picker("Section", selection: tabBinding) {
+                ForEach(Tab.allCases) { t in
+                    Group {
+                        if compact { Image(systemName: t.symbol).accessibilityLabel(t.rawValue) } else { Text(t.rawValue) }
+                    }
+                    .tag(t)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .controlSize(compact ? .large : .regular)
+            if compact {
+                Text(tab.rawValue).font(.caption).foregroundStyle(.secondary).accessibilityHidden(true)
+            }
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
@@ -96,6 +127,7 @@ struct NodeEditorView: View {
         }
         .pickerStyle(.segmented)
         .labelsHidden()
+        .controlSize(compact ? .large : .regular) // same height as the tab picker above it
         .padding(.horizontal)
         .padding(.bottom, 8)
         if showPreview {
