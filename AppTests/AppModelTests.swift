@@ -135,16 +135,21 @@ struct Harness {
     }
 }
 
-/// Regression (#17): a stored tab name that is no longer a tab showed Basics with no segment selected. The picker
-/// binds to `Tab(stored:)`, which must fall back to Basics without the stored name being needed to match.
+/// Regression (#17): a stored tab name that is no longer a tab showed the first tab with no segment selected. The
+/// picker binds to `Tab(stored:)`, which must fall back to the first tab (Title) without the stored name matching.
 @Suite struct EditorTabTests {
     @Test func knownTabIsRestored() {
         #expect(NodeEditorView.Tab(stored: "Body") == .body)
     }
 
-    @Test func unknownTabFallsBackToBasics() {
-        #expect(NodeEditorView.Tab(stored: "Notes") == .basics)
-        #expect(NodeEditorView.Tab(stored: "") == .basics)
+    @Test func unknownTabFallsBackToTitle() {
+        #expect(NodeEditorView.Tab(stored: "Notes") == .title)
+        #expect(NodeEditorView.Tab(stored: "") == .title)
+    }
+
+    /// The first tab was called Basics; a value stored by those builds opens its replacement.
+    @Test func formerBasicsTabOpensTitle() {
+        #expect(NodeEditorView.Tab(stored: "Basics") == .title)
     }
 }
 

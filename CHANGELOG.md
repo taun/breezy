@@ -10,8 +10,8 @@ All notable changes to Breezy are documented here. The format follows [Keep a Ch
 
 ### Added
 
-- **Editor tabs** (#11): the node editor shows one section at a time — Basics, Date, Links, Media, Body — chosen with a segmented control at the top. The Body tab gives the text editor the whole screen and scrolls with the cursor as you type. The selected tab is restored on relaunch.
-- **Symbol tabs on iPhone** (#17): at compact width (iPhone, narrow iPad windows) the editor tabs are symbols, with the selected tab's name under them (except on Body, which keeps the height for the editor) and the names read by VoiceOver. The tabs and the Body tab's Edit/Preview control use the large size on iOS 26 and later, so each segment is a full-size touch target.
+- **Editor tabs** (#11): the node editor shows one section at a time — Title, Date, Links, Media, Body — chosen with a segmented control at the top. Each tab is a grouped form with a header naming it, and the whole tab scrolls as one: the controls move up out of the way, so a long body gets the full screen (landscape on iPhone included), and the page follows the cursor as you type. The selected tab is restored on relaunch.
+- **Symbol tabs on iPhone** (#17): at compact width (iPhone, narrow iPad windows) the editor tabs are symbols, named by the section header below them and read by VoiceOver. The tabs and the Body tab's Edit/Preview control use the large size on iOS 26 and later, so each segment is a full-size touch target.
 - **Easier link relations** (#12): the relation menu is now at the left of each link, with a wider tap area.
 - **File issues from Breezy** (#9): Settings › File an Issue… takes a type (Bug or Enhancement), title and description, and an Execute switch that adds the `execute` label so Claude implements it. The token must also cover taun/breezy with Issues read and write; otherwise the error says what to change. The draft is kept if the app is closed.
 - **App version in Settings** (#6): the bottom of Settings shows "Breezy 1.0.0 (build N)" in small secondary text.

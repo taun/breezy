@@ -12,7 +12,7 @@ struct NodeEditorView: View {
     @FocusState private var focus: Field?
 
     // The selected tab, restored on relaunch.
-    @AppStorage("editor.tab") private var tabRaw = Tab.basics.rawValue
+    @AppStorage("editor.tab") private var tabRaw = Tab.title.rawValue
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
@@ -20,17 +20,17 @@ struct NodeEditorView: View {
     enum Field: String { case title, summary, body }
 
     enum Tab: String, CaseIterable, Identifiable {
-        case basics = "Basics", date = "Date", links = "Links", media = "Media", body = "Body"
+        case title = "Title", date = "Date", links = "Links", media = "Media", body = "Body"
         var id: String { rawValue }
 
-        /// The stored tab, or Basics for a name that is not a tab (renamed, or from another build). The stored value
-        /// is left as is, so a build that knows that tab still finds it.
-        init(stored: String) { self = Tab(rawValue: stored) ?? .basics }
+        /// The stored tab, or Title for a name that is not a tab (renamed, such as "Basics", or from another build).
+        /// The stored value is left as is, so a build that knows that tab still finds it.
+        init(stored: String) { self = Tab(rawValue: stored) ?? .title }
 
         /// Shown instead of the name where five names do not fit (compact width: iPhone, narrow iPad windows).
         var symbol: String {
             switch self {
-            case .basics: "info.circle"
+            case .title: "info.circle"
             case .date: "calendar"
             case .links: "link"
             case .media: "photo.on.rectangle"
@@ -41,7 +41,7 @@ struct NodeEditorView: View {
 
     private var tab: Tab { Tab(stored: tabRaw) }
 
-    /// Typed, so a stored name that is no longer a tab still selects the Basics segment it falls back to.
+    /// Typed, so a stored name that is no longer a tab still selects the Title segment it falls back to.
     private var tabBinding: Binding<Tab> { Binding(get: { tab }, set: { tabRaw = $0.rawValue }) }
 
     /// Compact width (iPhone, narrow iPad windows): symbol tabs, and segmented controls at the large size so each
@@ -58,28 +58,20 @@ struct NodeEditorView: View {
         #endif
     }
 
-    /// Segmented everywhere, like Edit/Preview (issue #17); symbols at compact width, with the selected tab's name
-    /// under them, and names elsewhere.
+    /// Segmented everywhere, like Edit/Preview (issue #17); symbols at compact width, names elsewhere. The section
+    /// header below it names the selected tab.
     private var tabPicker: some View {
-        VStack(spacing: 4) {
-            Picker("Section", selection: tabBinding) {
-                ForEach(Tab.allCases) { t in
-                    Group {
-                        if compact { Image(systemName: t.symbol).accessibilityLabel(t.rawValue) } else { Text(t.rawValue) }
-                    }
-                    .tag(t)
+        Picker("Section", selection: tabBinding) {
+            ForEach(Tab.allCases) { t in
+                Group {
+                    if compact { Image(systemName: t.symbol).accessibilityLabel(t.rawValue) } else { Text(t.rawValue) }
                 }
-            }
-            .labelsHidden()
-            .pickerStyle(.segmented)
-            .controlSize(segmentSize)
-            // Not on Body: the editor needs the height more than the highlighted segment needs a name.
-            if compact && tab != .body {
-                Text(tab.rawValue).font(.caption).foregroundStyle(.secondary).accessibilityHidden(true)
+                .tag(t)
             }
         }
-        .padding(.horizontal)
-        .padding(.vertical, 8)
+        .labelsHidden()
+        .pickerStyle(.segmented)
+        .controlSize(segmentSize)
     }
 
     @ViewBuilder private var issuesBanner: some View {
@@ -93,13 +85,11 @@ struct NodeEditorView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal)
-            .padding(.bottom, 8)
         }
     }
 
-    @ViewBuilder private func basics(_ node: NodeFile) -> some View {
-        Section {
+    @ViewBuilder private func titleSection(_ node: NodeFile) -> some View {
+        Section("Title") {
             TextField("Title", text: bind(\.title) { try $0.setTitle($1) })
                 .focused($focus, equals: .title)
             TypeField(type: bind(\.type) { try $0.setType($1) }, known: workspace.types)
@@ -113,7 +103,7 @@ struct NodeEditorView: View {
     }
 
     @ViewBuilder private func media(_ node: NodeFile) -> some View {
-        Section {
+        Section("Media") {
             ForEach(NodeFile.stringKeys, id: \.self) { key in
                 HStack {
                     TextField(key.capitalized, text: Binding(
@@ -128,24 +118,26 @@ struct NodeEditorView: View {
         }
     }
 
-    /// The editor fills the tab and scrolls itself, so the cursor stays on screen as one types.
-    @ViewBuilder private func bodyTab(_ node: NodeFile) -> some View {
-        Picker("Body", selection: $showPreview) {
-            Text("Edit").tag(false)
-            Text("Preview").tag(true)
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .controlSize(segmentSize)
-        .padding(.horizontal)
-        .padding(.bottom, 8)
-        if showPreview {
-            ScrollView { MarkdownPreview(node: node).padding() }
-        } else {
-            BodyEditor(text: Binding(get: { node.body }, set: { v in edit { $0.setBody(v) } }), slug: slug)
-                .focused($focus, equals: .body)
-                .font(.body.monospaced())
-                .padding(.horizontal, 12)
+    /// The editor grows with its text instead of scrolling itself, so the whole tab scrolls as one and the controls
+    /// above it move out of the way (landscape on iPhone leaves little height otherwise).
+    @ViewBuilder private func bodySection(_ node: NodeFile) -> some View {
+        Section("Body") {
+            Picker("Body", selection: $showPreview) {
+                Text("Edit").tag(false)
+                Text("Preview").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .controlSize(segmentSize)
+            if showPreview {
+                MarkdownPreview(node: node)
+            } else {
+                BodyEditor(text: Binding(get: { node.body }, set: { v in edit { $0.setBody(v) } }), slug: slug)
+                    .focused($focus, equals: .body)
+                    .font(.body.monospaced())
+                    .scrollDisabled(true)
+                    .frame(minHeight: 200)
+            }
         }
     }
 
@@ -153,17 +145,25 @@ struct NodeEditorView: View {
 
     var body: some View {
         if let node {
-            VStack(spacing: 0) {
-                tabPicker
-                issuesBanner
+            // One grouped form for every tab: the same background throughout, and the controls scroll with the content.
+            Form {
+                Section {
+                    VStack(spacing: 8) {
+                        tabPicker
+                        issuesBanner
+                    }
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets())
+                }
                 switch tab {
-                case .basics: Form { basics(node) }.formStyle(.grouped)
-                case .date: Form { DateSection(date: node.date) { new in edit { try $0.setDate(new) } } }.formStyle(.grouped)
-                case .links: Form { LinkEditorView(workspace: workspace, slug: slug) }.formStyle(.grouped)
-                case .media: Form { media(node) }.formStyle(.grouped)
-                case .body: bodyTab(node)
+                case .title: titleSection(node)
+                case .date: DateSection(date: node.date) { new in edit { try $0.setDate(new) } }
+                case .links: LinkEditorView(workspace: workspace, slug: slug)
+                case .media: media(node)
+                case .body: bodySection(node)
                 }
             }
+            .formStyle(.grouped)
             .onChange(of: focus) { _, f in
                 // Leaving the app also clears focus; only record changes made while in use.
                 if scenePhase == .active { focusRaw = f.map { "\(slug)|\($0.rawValue)" } ?? "" }
@@ -173,7 +173,7 @@ struct NodeEditorView: View {
                 let parts = focusRaw.split(separator: "|")
                 guard parts.count == 2, parts[0] == slug, let f = Field(rawValue: String(parts[1])) else { return }
                 if f == .body && showPreview { return }
-                tabRaw = (f == .body ? Tab.body : Tab.basics).rawValue
+                tabRaw = (f == .body ? Tab.body : Tab.title).rawValue
                 try? await Task.sleep(for: .milliseconds(150))
                 focus = f
             }
