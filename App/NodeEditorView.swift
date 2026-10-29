@@ -43,7 +43,8 @@ struct NodeEditorView: View {
     /// Compact width (iPhone, narrow iPad windows): symbol tabs, and segmented controls at the large size so each
     /// segment is a full-size touch target (iOS 26 and later; earlier versions keep the standard height).
     /// Shared by the tab and Edit/Preview pickers so the two stay the same height.
-    private var segmentSize: ControlSize { compact ? .large : .regular }
+    private var segmentSize: ControlSize { compact ? .large : inheritedSize }
+    @Environment(\.controlSize) private var inheritedSize
 
     private var compact: Bool {
         #if os(iOS)
