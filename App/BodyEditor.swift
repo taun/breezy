@@ -24,9 +24,13 @@ struct BodyEditor: View {
         editor
             #if os(iOS)
             .background(TextKit1(edits: edits))
-            .onChange(of: local) { _, _ in edits &+= 1 }
             #endif
-            .onChange(of: local) { _, v in if v != text { text = v } }
+            .onChange(of: local) { _, v in
+                #if os(iOS)
+                edits &+= 1
+                #endif
+                if v != text { text = v }
+            }
             // Changes from elsewhere (sync, conflict resolution, another node).
             .onChange(of: text) { _, v in if v != local { local = v } }
             .onChange(of: slug) { _, _ in local = text }
@@ -74,8 +78,8 @@ private struct SelectionRestoringEditor: View {
 /// rest, and the estimate shifts while typing: in a short editor (iPhone landscape), Return at the end of a long body
 /// sometimes scrolled to a stale end, past the text, leaving the editor blank or the cursor's line out of view.
 /// TextKit 1 lays out the whole text, so following the cursor lands on it. SwiftUI's TextEditor does not expose its
-/// text view, so this finds it: the nearest one around this background view that lies within the same area. If none
-/// is found (a future SwiftUI that renders differently), the editor keeps working as before and the search stops.
+/// text view, so this finds it: the nearest one around this background view that covers its center. If none is found
+/// (a future SwiftUI that renders differently), the editor keeps working as before.
 private struct TextKit1: UIViewRepresentable {
     /// Changes with every edit, so the check runs again if SwiftUI replaced the text view or it was not there yet.
     let edits: Int
@@ -84,9 +88,10 @@ private struct TextKit1: UIViewRepresentable {
     func updateUIView(_ view: Finder, context: Context) { view.switchTextView() }
 
     final class Finder: UIView {
-        private weak var switched: UITextView?
-        /// Searches that found nothing; after a few the search stops, so typing never pays for it.
-        private var misses = 0
+        /// How far up to look: the text view is a near relative of this background view, not elsewhere in the window.
+        private static let levels = 6
+        /// The text view already handled; it is not searched for again while it is still the editor's.
+        private weak var handled: UITextView?
 
         override func didMoveToWindow() {
             super.didMoveToWindow()
@@ -100,30 +105,32 @@ private struct TextKit1: UIViewRepresentable {
         }
 
         func switchTextView() {
-            guard window != nil, !bounds.isEmpty, misses < 20 else { return }
-            let area = convert(bounds, to: nil).insetBy(dx: -1, dy: -1)
-            if let s = switched, s.window != nil, s.textLayoutManager == nil, Self.lies(s, within: area) { return }
-            var ancestor = superview
-            while let a = ancestor {
-                if let textView = Self.textView(in: a, covering: area) {
-                    // Reading layoutManager is what switches a TextKit 2 text view to TextKit 1.
-                    if textView.textLayoutManager != nil { _ = textView.layoutManager }
-                    switched = textView
-                    return
+            guard window != nil, !bounds.isEmpty else { return }
+            let center = convert(CGPoint(x: bounds.midX, y: bounds.midY), to: nil)
+            if let h = handled, h.window != nil, Self.covers(h, center) { return }
+            // Up a level at a time, searching only the branches not searched yet, so each view is visited once.
+            var child: UIView = self
+            for _ in 0..<Self.levels {
+                guard let parent = child.superview else { return }
+                for branch in parent.subviews where branch !== child {
+                    if let textView = Self.textView(in: branch, covering: center) {
+                        // Reading layoutManager is what switches a TextKit 2 text view to TextKit 1.
+                        if textView.textLayoutManager != nil { _ = textView.layoutManager }
+                        handled = textView
+                        return
+                    }
                 }
-                ancestor = a.superview
+                child = parent
             }
-            misses += 1
         }
 
-        private static func lies(_ view: UIView, within area: CGRect) -> Bool {
-            let frame = view.convert(view.bounds, to: nil)
-            return !frame.isEmpty && area.contains(frame)
+        private static func covers(_ view: UIView, _ point: CGPoint) -> Bool {
+            view.convert(view.bounds, to: nil).contains(point)
         }
 
-        private static func textView(in view: UIView, covering area: CGRect) -> UITextView? {
-            if let t = view as? UITextView, lies(t, within: area) { return t }
-            for sub in view.subviews { if let t = textView(in: sub, covering: area) { return t } }
+        private static func textView(in view: UIView, covering point: CGPoint) -> UITextView? {
+            if let t = view as? UITextView, covers(t, point) { return t }
+            for sub in view.subviews { if let t = textView(in: sub, covering: point) { return t } }
             return nil
         }
     }
