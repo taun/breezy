@@ -54,9 +54,7 @@ public final class SiteWorkspace {
         let snapshot = try await fetchSnapshot(branch, client: client, store: store, progress: progress)
         let state = BranchState(branch: branch, base: snapshot, existsOnRemote: true, fetchedAt: .now)
         try store.saveBranchState(state)
-        let workspace = try SiteWorkspace(store: store, state: state)
-        await workspace.prefetchImages(client: client)
-        return workspace
+        return try SiteWorkspace(store: store, state: state) // images follow at the sync that comes next
     }
 
     /// The node files and assets at the branch head, downloading any file contents not already stored.
@@ -395,7 +393,7 @@ public final class SiteWorkspace {
     /// The blob sha of an image the preview shows, by its site path ("/assets/…"), or nil if this branch has no such
     /// asset (or the copy predates asset shas and has not synced since).
     func assetSHA(_ path: String) -> String? {
-        state.base.assetSHAs?[path.hasPrefix("/") ? path : "/" + path]
+        state.base.assetSHAs?[MarkdownImage.sitePath(path)]
     }
 
     /// Whether the path names an asset on this branch (as far as this copy knows).
@@ -416,7 +414,9 @@ public final class SiteWorkspace {
     /// Downloads every image the nodes show that is not on this device yet, so previews work offline. Only the
     /// referenced ones: the site's assets folder is much larger. Best effort, four at a time; misses are tried again.
     func prefetchImages(client: GitHubClient) async {
-        let shas = Set(nodes.values.flatMap { MarkdownImage.all(in: $0.body) }.compactMap { assetSHA($0.src) })
+        // Deleted nodes too: their last content is still previewed (DeletedNodeView).
+        let bodies = nodes.values.map(\.body) + deletedNodes.values.map(\.body)
+        let shas = Set(bodies.flatMap(MarkdownImage.shown).compactMap { assetSHA($0.src) })
             .filter { !store.hasObject($0) }.sorted()
         var index = 0
         while index < shas.count {

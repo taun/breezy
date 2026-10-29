@@ -488,6 +488,16 @@ func client(_ m: MockTransport) -> GitHubClient { GitHubClient(repo: RepoRef(own
         ])
     }
 
+    @Test func shownSkipsInlineImagesAndFencedCode() {
+        let body = "![a](/a.png)\nSee ![b](/b.png) inline\n```\n![c](/c.png)\n```\n![d](/d.png)"
+        #expect(MarkdownImage.shown(in: body).map(\.src) == ["/a.png", "/d.png"])
+    }
+
+    @Test func sitePathDecodesAndDropsQuery() {
+        #expect(MarkdownImage.sitePath("/assets/my%20photo.png?v=2#top") == "/assets/my photo.png")
+        #expect(MarkdownImage.sitePath("assets/x.png") == "/assets/x.png")
+    }
+
     @Test func standaloneOnlyWhenTheImageIsTheWholeLine() {
         #expect(MarkdownImage.standalone("  ![lego](/assets/l.png){.align-right} ") == MarkdownImage(alt: "lego", src: "/assets/l.png"))
         #expect(MarkdownImage.standalone("See ![lego](/assets/l.png)") == nil)
@@ -511,6 +521,8 @@ func client(_ m: MockTransport) -> GitHubClient { GitHubClient(repo: RepoRef(own
         let m = Self.siteWithImage()
         let store = tempStore()
         let ws = try await SiteWorkspace.download("main", client: client(m), store: store)
+        #expect(m.count("GET /git/blobs/bx") == 0) // the branch opens without waiting for images
+        _ = try await ws.sync(client: client(m))
         #expect(m.count("GET /git/blobs/bx") == 1)
         // Reopened from disk, with no client: still there.
         let reopened = try #require(try SiteWorkspace.open("main", store: store))
@@ -518,6 +530,7 @@ func client(_ m: MockTransport) -> GitHubClient { GitHubClient(repo: RepoRef(own
         #expect(ws.hasAsset("/assets/images/x.png"))
         _ = try await ws.sync(client: client(m))
         #expect(m.count("GET /git/blobs/bx") == 1) // not fetched again
+        #expect(ws.imageData("/assets/images/x.png?v=2") == Self.png)
     }
 
     @Test func unknownPathIsNotAnAsset() async throws {

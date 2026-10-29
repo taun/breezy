@@ -18,6 +18,23 @@ public struct MarkdownImage: Equatable, Sendable {
         text.matches(of: pattern).map { MarkdownImage(alt: String($0.1), src: String($0.2)) }
     }
 
+    /// The images the preview shows as pictures: standalone lines outside fenced code.
+    public static func shown(in body: String) -> [MarkdownImage] {
+        var inCode = false
+        return body.components(separatedBy: "\n").compactMap { line in
+            if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") { inCode.toggle(); return nil }
+            return inCode ? nil : standalone(line)
+        }
+    }
+
+    /// The site path a src names, as asset paths are keyed: leading slash, no query or fragment, percent-decoded
+    /// ("/assets/my%20photo.png?v=2" -> "/assets/my photo.png").
+    public static func sitePath(_ src: String) -> String {
+        let bare = String(src.prefix { $0 != "?" && $0 != "#" })
+        let decoded = bare.removingPercentEncoding ?? bare
+        return decoded.hasPrefix("/") ? decoded : "/" + decoded
+    }
+
     /// The image when it is the whole line (surrounding spaces aside), which the preview shows as a picture.
     public static func standalone(_ line: String) -> MarkdownImage? {
         guard let m = line.trimmingCharacters(in: .whitespaces).wholeMatch(of: pattern) else { return nil }

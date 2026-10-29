@@ -85,13 +85,14 @@ private struct PreviewImage: View {
     @Environment(AppModel.self) private var model
     let image: MarkdownImage
     let workspace: SiteWorkspace?
-    @State private var data: Data?
+    /// Decoded once per src, not on every render.
+    @State private var picture: Image?
 
     private var isWeb: Bool { image.src.hasPrefix("http://") || image.src.hasPrefix("https://") }
 
     var body: some View {
         Group {
-            if let picture = data.flatMap(Self.picture) {
+            if let picture {
                 picture.resizable().scaledToFit()
             } else if isWeb, let url = URL(string: image.src) {
                 AsyncImage(url: url) { $0.resizable().scaledToFit() } placeholder: { placeholder(missing: false) }
@@ -102,9 +103,10 @@ private struct PreviewImage: View {
         .frame(maxWidth: .infinity)
         .accessibilityLabel(image.alt.isEmpty ? "Image" : image.alt)
         .task(id: image.src) {
+            picture = nil // this view can be reused for another image (blocks are identified by position)
             guard !isWeb, let workspace else { return }
-            data = workspace.imageData(image.src)
-            if data == nil, let client = model.client { data = try? await workspace.loadImage(image.src, client: client) }
+            let data = if let client = model.client { try? await workspace.loadImage(image.src, client: client) } else { workspace.imageData(image.src) }
+            picture = data.flatMap(Self.picture)
         }
     }
 
