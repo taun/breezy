@@ -10,6 +10,9 @@ struct BodyEditor: View {
     /// The editor edits this local copy, not the model's text directly: a text view bound to a value that is
     /// re-read from the model on every keystroke resets its cursor (typing "Hello" gave "ElloH").
     @State private var local: String
+    #if os(iOS)
+    @State private var edits = 0
+    #endif
 
     init(text: Binding<String>, slug: String) {
         _text = text
@@ -20,7 +23,8 @@ struct BodyEditor: View {
     var body: some View {
         editor
             #if os(iOS)
-            .background(TextKit1(edits: local.utf16.count))
+            .background(TextKit1(edits: edits))
+            .onChange(of: local) { _, _ in edits &+= 1 }
             #endif
             .onChange(of: local) { _, v in if v != text { text = v } }
             // Changes from elsewhere (sync, conflict resolution, another node).
@@ -70,8 +74,8 @@ private struct SelectionRestoringEditor: View {
 /// rest, and the estimate shifts while typing: in a short editor (iPhone landscape), Return at the end of a long body
 /// sometimes scrolled to a stale end, past the text, leaving the editor blank or the cursor's line out of view.
 /// TextKit 1 lays out the whole text, so following the cursor lands on it. SwiftUI's TextEditor does not expose its
-/// text view, so this finds it: the nearest one around this background view that covers the same area. If none is
-/// found (a future SwiftUI that renders differently), the editor keeps working as before.
+/// text view, so this finds it: the nearest one around this background view that lies within the same area. If none
+/// is found (a future SwiftUI that renders differently), the editor keeps working as before and the search stops.
 private struct TextKit1: UIViewRepresentable {
     /// Changes with every edit, so the check runs again if SwiftUI replaced the text view or it was not there yet.
     let edits: Int
@@ -81,6 +85,8 @@ private struct TextKit1: UIViewRepresentable {
 
     final class Finder: UIView {
         private weak var switched: UITextView?
+        /// Searches that found nothing; after a few the search stops, so typing never pays for it.
+        private var misses = 0
 
         override func didMoveToWindow() {
             super.didMoveToWindow()
@@ -94,8 +100,9 @@ private struct TextKit1: UIViewRepresentable {
         }
 
         func switchTextView() {
-            guard window != nil, !(switched?.window != nil && switched?.textLayoutManager == nil) else { return }
-            let area = convert(bounds, to: nil)
+            guard window != nil, !bounds.isEmpty, misses < 20 else { return }
+            let area = convert(bounds, to: nil).insetBy(dx: -1, dy: -1)
+            if let s = switched, s.window != nil, s.textLayoutManager == nil, Self.lies(s, within: area) { return }
             var ancestor = superview
             while let a = ancestor {
                 if let textView = Self.textView(in: a, covering: area) {
@@ -106,10 +113,16 @@ private struct TextKit1: UIViewRepresentable {
                 }
                 ancestor = a.superview
             }
+            misses += 1
+        }
+
+        private static func lies(_ view: UIView, within area: CGRect) -> Bool {
+            let frame = view.convert(view.bounds, to: nil)
+            return !frame.isEmpty && area.contains(frame)
         }
 
         private static func textView(in view: UIView, covering area: CGRect) -> UITextView? {
-            if let t = view as? UITextView, t.convert(t.bounds, to: nil).intersects(area) { return t }
+            if let t = view as? UITextView, lies(t, within: area) { return t }
             for sub in view.subviews { if let t = textView(in: sub, covering: area) { return t } }
             return nil
         }
