@@ -23,6 +23,10 @@ struct NodeEditorView: View {
         case basics = "Basics", date = "Date", links = "Links", media = "Media", body = "Body"
         var id: String { rawValue }
 
+        /// The stored tab, or Basics for a name that is not a tab (renamed, or from another build). The stored value
+        /// is left as is, so a build that knows that tab still finds it.
+        init(stored: String) { self = Tab(rawValue: stored) ?? .basics }
+
         /// Shown instead of the name where five names do not fit (compact width: iPhone, narrow iPad windows).
         var symbol: String {
             switch self {
@@ -35,7 +39,7 @@ struct NodeEditorView: View {
         }
     }
 
-    private var tab: Tab { Tab(rawValue: tabRaw) ?? .basics }
+    private var tab: Tab { Tab(stored: tabRaw) }
 
     /// Typed, so a stored name that is no longer a tab still selects the Basics segment it falls back to.
     private var tabBinding: Binding<Tab> { Binding(get: { tab }, set: { tabRaw = $0.rawValue }) }
@@ -165,8 +169,6 @@ struct NodeEditorView: View {
                 if scenePhase == .active { focusRaw = f.map { "\(slug)|\($0.rawValue)" } ?? "" }
             }
             .task {
-                // A stored name that is no longer a tab (renamed or removed) is replaced by the Basics fallback.
-                if Tab(rawValue: tabRaw) == nil { tabRaw = Tab.basics.rawValue }
                 // Put the cursor back where it was, on the tab that holds it.
                 let parts = focusRaw.split(separator: "|")
                 guard parts.count == 2, parts[0] == slug, let f = Field(rawValue: String(parts[1])) else { return }

@@ -135,6 +135,19 @@ struct Harness {
     }
 }
 
+/// Regression (#17): a stored tab name that is no longer a tab showed Basics with no segment selected. The picker
+/// binds to `Tab(stored:)`, which must fall back to Basics without the stored name being needed to match.
+@Suite struct EditorTabTests {
+    @Test func knownTabIsRestored() {
+        #expect(NodeEditorView.Tab(stored: "Body") == .body)
+    }
+
+    @Test func unknownTabFallsBackToBasics() {
+        #expect(NodeEditorView.Tab(stored: "Notes") == .basics)
+        #expect(NodeEditorView.Tab(stored: "") == .basics)
+    }
+}
+
 @MainActor @Suite struct OfflineTests {
     /// Offline: the app keeps working from the local copy, commits wait, and they are pushed when back online.
     @Test func offlineCommitsWaitAndPushWhenBackOnline() async throws {
