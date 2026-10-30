@@ -77,9 +77,9 @@ private struct SelectionRestoringEditor: View {
 /// Switches the editor's text view to TextKit 1. TextKit 2 lays out a long text lazily and estimates the height of the
 /// rest, and the estimate shifts while typing: in a short editor (iPhone landscape), Return at the end of a long body
 /// sometimes scrolled to a stale end, past the text, leaving the editor blank or the cursor's line out of view.
-/// TextKit 1 lays out the whole text, so following the cursor lands on it. SwiftUI's TextEditor does not expose its
-/// text view, so this finds it: the nearest one around this background view that covers its center. If none is found
-/// (a future SwiftUI that renders differently), the editor keeps working as before.
+/// Laid out in full by TextKit 1, the text has its real height, so following the cursor lands on it. SwiftUI's
+/// TextEditor does not expose its text view, so this finds it: the nearest one around this background view that covers
+/// its center. If none is found (a future SwiftUI that renders differently), the editor keeps working as before.
 private struct TextKit1: UIViewRepresentable {
     /// Changes with every edit, so the check runs again if SwiftUI replaced the text view or it was not there yet.
     let edits: Int
@@ -114,14 +114,23 @@ private struct TextKit1: UIViewRepresentable {
                 guard let parent = child.superview else { return }
                 for branch in parent.subviews where branch !== child {
                     if let textView = Self.textView(in: branch, covering: center) {
-                        // Reading layoutManager is what switches a TextKit 2 text view to TextKit 1.
-                        if textView.textLayoutManager != nil { _ = textView.layoutManager }
+                        Self.layOutWholeText(textView)
                         handled = textView
                         return
                     }
                 }
                 child = parent
             }
+        }
+
+        /// TextKit 1 in a text view also lays out only what has been shown (non-contiguous layout), so its scrollable
+        /// height grows as one scrolls. Opening a node sometimes left that height no taller than the editor: the text
+        /// would not scroll until placing the cursor laid out more. Laying out all of it gives the real height.
+        private static func layOutWholeText(_ textView: UITextView) {
+            let layout = textView.layoutManager // reading it is what switches a TextKit 2 text view to TextKit 1
+            layout.allowsNonContiguousLayout = false
+            layout.ensureLayout(for: textView.textContainer)
+            textView.setNeedsLayout()
         }
 
         private static func covers(_ view: UIView, _ point: CGPoint) -> Bool {
