@@ -124,13 +124,16 @@ private struct TextKit1: UIViewRepresentable {
         }
 
         /// TextKit 1 in a text view also lays out only what has been shown (non-contiguous layout), so its scrollable
-        /// height grows as one scrolls. Opening a node sometimes left that height no taller than the editor: the text
-        /// would not scroll until placing the cursor laid out more. Laying out all of it gives the real height.
+        /// height would grow as one scrolls; all of it is laid out instead. The switch itself also leaves the scrollable
+        /// height at about the editor's own, and the text view recomputes it only on a text change or a resize (the
+        /// keyboard), so a body would not scroll until the cursor was placed: it is set here.
         private static func layOutWholeText(_ textView: UITextView) {
             let layout = textView.layoutManager // reading it is what switches a TextKit 2 text view to TextKit 1
             layout.allowsNonContiguousLayout = false
             layout.ensureLayout(for: textView.textContainer)
-            textView.setNeedsLayout()
+            let inset = textView.textContainerInset
+            let height = layout.usedRect(for: textView.textContainer).maxY + inset.top + inset.bottom
+            textView.contentSize = CGSize(width: textView.bounds.width, height: ceil(height))
         }
 
         private static func covers(_ view: UIView, _ point: CGPoint) -> Bool {
