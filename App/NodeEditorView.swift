@@ -8,6 +8,7 @@ struct NodeEditorView: View {
     @Environment(\.scenePhase) private var scenePhase
     // Restored on relaunch: preview mode, and which field of which node was being edited ("slug|field").
     @AppStorage("editor.preview") private var showPreview = false
+    @AppStorage("editor.draft") private var showDraft = false
     @AppStorage("editor.focus") private var focusRaw = ""
     @FocusState private var focus: Field?
 
@@ -161,9 +162,8 @@ struct NodeEditorView: View {
             }
             VStack(spacing: 0) {
                 if !controlsHidden {
-                    Picker("Body", selection: $showPreview) {
-                        Text("Edit").tag(false)
-                        Text("Preview").tag(true)
+                    Picker("Body", selection: bodyMode) {
+                        ForEach(BodyMode.allCases) { Text($0.rawValue).tag($0) }
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
@@ -171,7 +171,12 @@ struct NodeEditorView: View {
                     .padding(12)
                     Divider().padding(.horizontal, 12)
                 }
-                if showPreview {
+                if showDraft && !showPreview {
+                    DraftView(branch: workspace.branch, slug: slug, original: node.body, compact: compact) { text in
+                        edit { $0.setBody(text) }
+                    }
+                    .id("\(workspace.branch)|\(slug)") // the draft's storage key is fixed when the view is made
+                } else if showPreview {
                     ScrollView { MarkdownPreview(node: node, workspace: workspace).padding() }
                 } else {
                     BodyEditor(text: Binding(get: { node.body }, set: { v in edit { $0.setBody(v) } }), slug: slug)
@@ -194,6 +199,17 @@ struct NodeEditorView: View {
         #if os(iOS)
         .onGeometryChange(for: Bool.self) { Self.isShortSpace($0.size.height) } action: { shortSpace = $0 }
         #endif
+    }
+
+    enum BodyMode: String, CaseIterable, Identifiable {
+        case edit = "Edit", draft = "Draft", preview = "Preview"
+        var id: String { rawValue }
+    }
+
+    private var bodyMode: Binding<BodyMode> {
+        Binding(
+            get: { showPreview ? .preview : showDraft ? .draft : .edit },
+            set: { showPreview = $0 == .preview; showDraft = $0 == .draft })
     }
 
     private var node: NodeFile? { workspace.nodes[slug] }
