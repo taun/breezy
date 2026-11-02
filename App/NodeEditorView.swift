@@ -6,13 +6,14 @@ struct NodeEditorView: View {
     let workspace: SiteWorkspace
     let slug: String
     @Environment(\.scenePhase) private var scenePhase
-    // Restored on relaunch: preview mode, and which field of which node was being edited ("slug|field").
-    @AppStorage("editor.preview") private var showPreview = false
-    @AppStorage("editor.draft") private var showDraft = false
+    // Which field of which node was being edited ("slug|field"), restored on relaunch. On this device only: the
+    // node's tab, mode and cursor are in its editor state (`workspace.editorState`), which syncs with the node.
     @AppStorage("editor.focus") private var focusRaw = ""
     @FocusState private var focus: Field?
+    /// Bumped to put the synced cursor back in the body editor after a sync brought in a new version.
+    @State private var restoreToken = 0
 
-    // The selected tab, restored on relaunch.
+    // The last tab chosen on this device: the tab of a node with no editor state yet.
     @AppStorage("editor.tab") private var tabRaw = Tab.title.rawValue
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -31,6 +32,26 @@ struct NodeEditorView: View {
         /// The stored value is left as is, so a build that knows that tab still finds it.
         init(stored: String) { self = Tab(rawValue: stored) ?? .title }
 
+        init(_ t: EditorState.Tab) {
+            switch t {
+            case .title: self = .title
+            case .date: self = .date
+            case .links: self = .links
+            case .media: self = .media
+            case .body: self = .body
+            }
+        }
+
+        var stateTab: EditorState.Tab {
+            switch self {
+            case .title: .title
+            case .date: .date
+            case .links: .links
+            case .media: .media
+            case .body: .body
+            }
+        }
+
         /// Shown instead of the name where five names do not fit (compact width: iPhone, narrow iPad windows).
         var symbol: String {
             switch self {
@@ -43,10 +64,17 @@ struct NodeEditorView: View {
         }
     }
 
-    private var tab: Tab { Tab(stored: tabRaw) }
+    private var editorState: EditorState { workspace.editorState(slug) }
+
+    private var tab: Tab { editorState.tab.map(Tab.init) ?? Tab(stored: tabRaw) }
 
     /// Typed, so a stored name that is no longer a tab still selects the Title segment it falls back to.
-    private var tabBinding: Binding<Tab> { Binding(get: { tab }, set: { tabRaw = $0.rawValue }) }
+    private var tabBinding: Binding<Tab> { Binding(get: { tab }, set: { selectTab($0) }) }
+
+    private func selectTab(_ t: Tab) {
+        tabRaw = t.rawValue
+        workspace.setEditor(slug) { $0.tab = t.stateTab }
+    }
 
     /// Compact width (iPhone, narrow iPad windows): symbol tabs, and segmented controls at the large size so each
     /// segment is a full-size touch target (iOS 26 and later; earlier versions keep the standard height).
@@ -171,15 +199,20 @@ struct NodeEditorView: View {
                     .padding(12)
                     Divider().padding(.horizontal, 12)
                 }
-                if showDraft && !showPreview {
-                    DraftView(branch: workspace.branch, slug: slug, original: node.body, compact: compact) { text in
-                        edit { $0.setBody(text) }
-                    }
-                    .id("\(workspace.branch)|\(slug)") // the draft's storage key is fixed when the view is made
-                } else if showPreview {
+                switch bodyMode.wrappedValue {
+                case .draft:
+                    DraftView(draft: editorState.draft?.text ?? "", original: node.body, compact: compact,
+                              isStale: workspace.draftIsStale(slug),
+                              setDraft: { text in run { try workspace.setDraft(slug, text) } },
+                              markSeen: { run { try workspace.rebaseDraft(slug) } },
+                              use: { text in edit { $0.setBody(text) } })
+                    .id("\(workspace.branch)|\(slug)") // a fresh local copy of the draft per node
+                case .preview:
                     ScrollView { MarkdownPreview(node: node, workspace: workspace).padding() }
-                } else {
-                    BodyEditor(text: Binding(get: { node.body }, set: { v in edit { $0.setBody(v) } }), slug: slug)
+                case .edit:
+                    BodyEditor(text: Binding(get: { node.body }, set: { v in edit { $0.setBody(v) } }), slug: slug,
+                               selection: editorState.selection, restoreToken: restoreToken,
+                               onSelection: { range in workspace.setEditor(slug) { $0.selection = range } })
                         .focused($focus, equals: .body)
                         .font(.body.monospaced())
                         .scrollContentBackground(.hidden)
@@ -208,8 +241,21 @@ struct NodeEditorView: View {
 
     private var bodyMode: Binding<BodyMode> {
         Binding(
-            get: { showPreview ? .preview : showDraft ? .draft : .edit },
-            set: { showPreview = $0 == .preview; showDraft = $0 == .draft })
+            get: {
+                switch editorState.mode {
+                case .draft?: .draft
+                case .preview?: .preview
+                case .edit?, nil: .edit
+                }
+            },
+            set: { m in
+                workspace.setEditor(slug) { s in s.mode = m == .draft ? .draft : m == .preview ? .preview : .edit }
+            })
+    }
+
+    /// Runs a change to the workspace, showing what went wrong if it fails.
+    private func run(_ change: () throws -> Void) {
+        do { try change() } catch { model.errorMessage = error.localizedDescription }
     }
 
     private var node: NodeFile? { workspace.nodes[slug] }
@@ -251,12 +297,15 @@ struct NodeEditorView: View {
                 // Put the cursor back where it was, on the tab that holds it.
                 let parts = focusRaw.split(separator: "|")
                 guard parts.count == 2, parts[0] == slug, let f = Field(rawValue: String(parts[1])) else { return }
-                if f == .body && showPreview { return }
-                tabRaw = (f == .body ? Tab.body : Tab.title).rawValue
+                if f == .body && bodyMode.wrappedValue != .edit { return } // no body editor to focus
+                selectTab(f == .body ? .body : .title)
                 try? await Task.sleep(for: .milliseconds(150))
                 guard !Task.isCancelled else { return } // the node was closed
                 focus = f
             }
+            // A sync brought in a new version of this node or its editor state: the tab and mode follow by
+            // themselves (they are read from the workspace); the body editor is told to take the cursor again.
+            .onChange(of: workspace.remoteRevision[slug]) { restoreToken += 1 }
             .navigationTitle(node.title)
             .toolbar {
                 #if os(iOS)

@@ -20,6 +20,16 @@ public final class SiteWorkspace {
     public private(set) var deletedNodes: [String: NodeFile] = [:]
     /// base + queue, by slug: what working edits are compared against.
     private var committedText: [String: String] = [:]
+    /// Editor state files in base + queue, by slug, parsed (one that does not parse counts as empty).
+    private var committedStates: [String: EditorState] = [:]
+    /// Each node's editor state: uncommitted if changed here, else committed. Read with `editorState(_:)`.
+    public private(set) var editorStates: [String: EditorState] = [:]
+    /// Slugs whose editor state changed in memory and is not on disk yet (cursor moves are written in batches).
+    private var unsavedStates: Set<String> = []
+    private var stateSaveTask: Task<Void, Never>?
+    /// Bumped for a node whenever a sync brings in a new version of it or of its editor state, so an open editor
+    /// shows the new content and state (issue #15).
+    public private(set) var remoteRevision: [String: Int] = [:]
     public private(set) var isSyncing = false
     /// Counts images stored on the device, so an open preview showing a placeholder can try again.
     public private(set) var storedImages = 0
@@ -67,11 +77,18 @@ public final class SiteWorkspace {
 
     static func fetchSnapshot(commit: String, client: GitHubClient, store: LocalStore, progress: Progress? = nil) async throws -> Snapshot {
         let entries = try await client.tree(ofCommit: commit)
-        let nodeEntries = entries.filter { e in
-            e.isBlob && e.path.hasPrefix(nodesDir) && e.path.hasSuffix(".md")
-                && !e.path.dropFirst(nodesDir.count).contains("/") // the site's glob is not recursive
-        }
-        let missing = nodeEntries.filter { !store.hasObject($0.sha) }
+        let nodeEntries = entries.filter(SitePath.isNodeEntry)
+        let stateEntries = entries.filter(SitePath.isStateEntry)
+        try await storeBlobs(of: nodeEntries + stateEntries, client: client, store: store, progress: progress)
+        let assetSHAs = assetSHAs(entries)
+        return Snapshot(commit: commit, files: Dictionary(uniqueKeysWithValues: nodeEntries.map { ($0.path, $0.sha) }),
+                        assets: assetSHAs.keys.sorted(), assetSHAs: assetSHAs,
+                        states: Dictionary(uniqueKeysWithValues: stateEntries.map { ($0.path, $0.sha) }))
+    }
+
+    /// Downloads the text of every entry not already on the device.
+    private static func storeBlobs(of entries: [TreeEntry], client: GitHubClient, store: LocalStore, progress: Progress?) async throws {
+        let missing = entries.filter { !store.hasObject($0.sha) }
         let texts = try await withThrowingTaskGroup(of: (String, String).self) { group in
             for e in missing { group.addTask { (e.sha, try await client.blobText(e.sha)) } }
             var out: [(String, String)] = []
@@ -83,9 +100,6 @@ public final class SiteWorkspace {
             return out
         }
         for (sha, text) in texts { try store.storeObject(text, sha: sha) }
-        let assetSHAs = assetSHAs(entries)
-        return Snapshot(commit: commit, files: Dictionary(uniqueKeysWithValues: nodeEntries.map { ($0.path, $0.sha) }),
-                        assets: assetSHAs.keys.sorted(), assetSHAs: assetSHAs)
     }
 
     /// Site path ("/assets/…") -> blob sha of every file under src/assets.
@@ -159,24 +173,82 @@ public final class SiteWorkspace {
         return out.sorted { $0.path < $1.path }
     }
 
-    public var hasChanges: Bool { !changes.isEmpty }
+    /// Uncommitted drafts: editor state files whose draft differs from the committed one. A draft counts as a change by
+    /// itself, so it can be committed and continued on another device; a moved cursor or another tab does not.
+    public var draftChanges: [FileChange] {
+        editorStates.keys.sorted().compactMap { slug in
+            guard nodes[slug] != nil, editorState(slug).draftDiffers(from: committedState(slug)) else { return nil }
+            return FileChange(path: SitePath.statePath(slug), content: editorState(slug).rendered())
+        }
+    }
 
-    /// Anything here that is not on GitHub: uncommitted edits or queued commits.
+    /// What a commit takes: the node changes and drafts, plus the editor state of every node they touch when it
+    /// differs from the committed one (it rides along), and the deletion of a deleted node's state file.
+    var commitChanges: [FileChange] {
+        let nodeChanges = changes
+        var slugs = Set(nodeChanges.compactMap { if case let .node(s)? = SitePath.kind($0.path) { s } else { nil } })
+        slugs.formUnion(draftChanges.compactMap { if case let .state(s)? = SitePath.kind($0.path) { s } else { nil } })
+        var out = nodeChanges
+        for slug in slugs.sorted() {
+            let path = SitePath.statePath(slug)
+            if nodes[slug] == nil {
+                if committedStates[slug] != nil { out.append(FileChange(path: path, content: nil)) }
+            } else if editorState(slug) != committedState(slug) ?? EditorState() {
+                out.append(FileChange(path: path, content: editorState(slug).rendered()))
+            }
+        }
+        return out
+    }
+
+    /// One row per node with something to commit: its file and/or its draft.
+    public struct NodeChange: Equatable, Sendable, Identifiable {
+        public enum File: Equatable, Sendable { case added, edited, deleted }
+        public enum DraftChange: Equatable, Sendable { case started, updated, removed }
+        public var slug: String
+        public var file: File?
+        public var draft: DraftChange?
+        public var id: String { slug }
+    }
+
+    public var changedNodes: [NodeChange] {
+        var rows: [String: NodeChange] = [:]
+        for c in changes {
+            let slug = Self.slug(c.path)
+            rows[slug] = NodeChange(slug: slug, file: c.content == nil ? .deleted : committedText[slug] == nil ? .added : .edited)
+        }
+        for c in draftChanges {
+            guard case let .state(slug)? = SitePath.kind(c.path) else { continue }
+            let before = committedState(slug)?.draft, after = editorState(slug).draft
+            rows[slug, default: NodeChange(slug: slug)].draft = before == nil ? .started : after == nil ? .removed : .updated
+        }
+        return rows.values.sorted { $0.slug < $1.slug }
+    }
+
+    public var hasChanges: Bool {
+        !changes.isEmpty || editorStates.contains { nodes[$0.key] != nil && $0.value.draftDiffers(from: committedStates[$0.key]) }
+    }
+
+    /// Anything here that is not on GitHub: uncommitted edits or drafts, or queued commits.
     public var hasLocalChanges: Bool { hasChanges || !queue.isEmpty }
 
     /// A default commit message naming what the uncommitted changes do, e.g. "Add new-talk; Edit bowery; Delete a-theory".
     /// Each group lists up to three nodes, then "and N more".
     public var suggestedCommitMessage: String {
-        var added: [String] = [], edited: [String] = [], deleted: [String] = []
-        for c in changes {
-            let slug = Self.slug(c.path)
-            if c.content == nil { deleted.append(slug) } else if committedText[slug] == nil { added.append(slug) } else { edited.append(slug) }
+        var added: [String] = [], edited: [String] = [], deleted: [String] = [], drafts: [String] = []
+        for row in changedNodes {
+            switch row.file {
+            case .added: added.append(row.slug)
+            case .edited: edited.append(row.slug)
+            case .deleted: deleted.append(row.slug)
+            case nil: drafts.append(row.slug)
+            }
         }
         func part(_ verb: String, _ slugs: [String]) -> String? {
             guard !slugs.isEmpty else { return nil }
             return "\(verb) " + slugs.prefix(3).joined(separator: ", ") + (slugs.count > 3 ? " and \(slugs.count - 3) more" : "")
         }
-        return [part("Add", added), part("Edit", edited), part("Delete", deleted)].compactMap { $0 }.joined(separator: "; ")
+        return [part("Add", added), part("Edit", edited), part("Delete", deleted), part("Update draft of", drafts)]
+            .compactMap { $0 }.joined(separator: "; ")
     }
 
     /// The branch was found deleted on GitHub while this copy had local changes; see `recreateOnGitHub` and `moveEdits`.
@@ -186,8 +258,101 @@ public final class SiteWorkspace {
     /// Text of a node in the base snapshot / GitHub's pending snapshot, for showing conflicts.
     public func text(sha: String?) -> String? { sha.flatMap(store.object) }
 
-    /// The local version of a conflicted path (nil: deleted locally).
+    /// The local version of a conflicted node path (nil: deleted locally).
     public func localText(path: String) -> String? { nodes[Self.slug(path)]?.rendered() }
+
+    /// The two sides of a conflict as text to compare and merge: node files whole, editor state files by their draft.
+    public func conflictSides(_ c: Conflict) -> (isDraft: Bool, mine: String?, theirs: String?) {
+        if case let .state(slug)? = SitePath.kind(c.path) {
+            return (true, editorState(slug).draft?.text, store.editorState(sha: c.remoteSHA)?.draft?.text)
+        }
+        return (false, localText(path: c.path), text(sha: c.remoteSHA))
+    }
+
+    // MARK: Editor state (tab, mode, cursor, draft)
+
+    /// A node's editor state (empty for a node never opened anywhere).
+    public func editorState(_ slug: String) -> EditorState { editorStates[slug] ?? EditorState() }
+
+    /// The committed editor state (base + queue), nil if there is none.
+    func committedState(_ slug: String) -> EditorState? { committedStates[slug] }
+
+    /// Changes a node's tab, mode or cursor. Kept in memory at once and written to disk shortly after, so moving the
+    /// cursor while typing does not write a file per keystroke; `flushEditorStates` writes them now.
+    public func setEditor(_ slug: String, _ change: (inout EditorState) -> Void) {
+        var s = editorState(slug)
+        change(&s)
+        guard s != editorState(slug) else { return }
+        editorStates[slug] = s
+        unsavedStates.insert(slug)
+        stateSaveTask?.cancel()
+        stateSaveTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else { return }
+            try? self?.flushEditorStates()
+        }
+    }
+
+    /// Sets (or with nil or "", removes) a node's body draft, saved at once like any edit. Starting a draft records
+    /// the body it started from.
+    public func setDraft(_ slug: String, _ text: String?) throws {
+        var s = editorState(slug)
+        if let text, !text.isEmpty {
+            if s.draft == nil { s.draft = .init(text: text, base: EditorState.bodySHA(nodes[slug]?.body ?? "")) } else { s.draft?.text = text }
+        } else {
+            s.draft = nil
+        }
+        guard s != editorState(slug) else { return }
+        editorStates[slug] = s
+        try saveState(slug)
+    }
+
+    /// Whether the body changed since the draft was started (or last marked as seen).
+    public func draftIsStale(_ slug: String) -> Bool {
+        guard let base = editorState(slug).draft?.base, let body = nodes[slug]?.body else { return false }
+        return base != EditorState.bodySHA(body)
+    }
+
+    /// Marks the current body as the one the draft is based on.
+    public func rebaseDraft(_ slug: String) throws {
+        guard editorState(slug).draft != nil, let body = nodes[slug]?.body else { return }
+        editorStates[slug]?.draft?.base = EditorState.bodySHA(body)
+        try saveState(slug)
+    }
+
+    /// Puts the committed draft back, keeping the tab, mode and cursor.
+    public func revertDraft(_ slug: String) throws {
+        var s = editorState(slug)
+        s.draft = committedState(slug)?.draft
+        guard s != editorState(slug) else { return }
+        editorStates[slug] = s
+        try saveState(slug)
+    }
+
+    /// Drops editor state writes still pending, for a copy that was just removed (it would be written again).
+    public func cancelPendingStateWrites() {
+        stateSaveTask?.cancel()
+        stateSaveTask = nil
+        unsavedStates = []
+    }
+
+    /// Writes editor state changes still held in memory. Call before the app goes to the background.
+    public func flushEditorStates() throws {
+        stateSaveTask?.cancel()
+        stateSaveTask = nil
+        for slug in unsavedStates.sorted() { try saveState(slug) }
+    }
+
+    /// Writes one node's uncommitted editor state, or removes it when it matches the committed one.
+    private func saveState(_ slug: String) throws {
+        unsavedStates.remove(slug)
+        let s = editorState(slug)
+        if s == committedState(slug) ?? EditorState() {
+            try store.removeWorkingState(slug: slug, branch: branch)
+        } else {
+            try store.saveWorkingState(s.rendered(), slug: slug, branch: branch)
+        }
+    }
 
     // MARK: Editing (saved to disk immediately)
 
@@ -213,6 +378,7 @@ public final class SiteWorkspace {
             }
         }
         nodes[slug] = nil
+        if committedText[slug] == nil { try dropEditorState(slug) } // never committed: it cannot be undeleted
         try persist(slug)
     }
 
@@ -224,6 +390,13 @@ public final class SiteWorkspace {
             try revert(slug)
         } else {
             nodes[slug] = gone
+            // The committed deletion also removes its editor state file. Not pushed yet, the base still has it: put it
+            // back, draft and all, as an uncommitted change that goes up with the node. Once the deletion is pushed
+            // the draft is gone with it, like the node's unpublished edits.
+            if editorStates[slug] == nil, let s = store.editorState(sha: state.base.states?[SitePath.statePath(slug)]) {
+                editorStates[slug] = s
+                try saveState(slug)
+            }
             try persist(slug)
         }
     }
@@ -239,12 +412,26 @@ public final class SiteWorkspace {
     }
 
     public func revert(_ slug: String) throws {
-        if let text = committedText[slug] { nodes[slug] = try NodeFile(slug: slug, text: text) } else { nodes[slug] = nil }
+        if let text = committedText[slug] {
+            nodes[slug] = try NodeFile(slug: slug, text: text)
+        } else {
+            nodes[slug] = nil // an added node: its editor state goes with it
+            try dropEditorState(slug)
+        }
         try persist(slug)
     }
 
+    /// Forgets a node's uncommitted editor state (its node is going away without ever having been committed).
+    private func dropEditorState(_ slug: String) throws {
+        editorStates[slug] = committedState(slug)
+        unsavedStates.remove(slug)
+        try store.removeWorkingState(slug: slug, branch: branch)
+    }
+
+    /// Reverts every node and draft.
     public func revertAll() throws {
         for slug in Set(nodes.keys).union(committedText.keys) { try revert(slug) }
+        for slug in Array(editorStates.keys) { try revertDraft(slug) }
     }
 
     /// Writes one node's working state: an edit file, a deletion mark, or nothing when it matches the committed text.
@@ -264,13 +451,22 @@ public final class SiteWorkspace {
 
     /// Turns the uncommitted changes into a queued commit; `sync` pushes it.
     public func commit(message: String) throws {
-        let pending = changes
+        try flushEditorStates()
+        let pending = commitChanges
         guard !pending.isEmpty else { return }
         queue.append(QueuedCommit(message: message, changes: pending))
         try store.saveQueue(queue, for: branch)
-        let deletedPaths = pending.filter { $0.content == nil }.map(\.path)
+        let deletedPaths = pending.filter { $0.content == nil && Self.isNodePath($0.path) }.map(\.path)
         if !deletedPaths.isEmpty { state.pendingDeletions = Array(Set((state.pendingDeletions ?? []) + deletedPaths)).sorted() }
-        for c in pending { try store.removeWorking(slug: Self.slug(c.path), branch: branch) }
+        for c in pending {
+            switch SitePath.kind(c.path) {
+            case let .node(slug)?:
+                try store.removeWorking(slug: slug, branch: branch)
+                if c.content == nil { try store.removeWorkingState(slug: slug, branch: branch) } // never committed
+            case let .state(slug)?: try store.removeWorkingState(slug: slug, branch: branch)
+            case nil: break
+            }
+        }
         state.deleted = []
         try store.saveBranchState(state)
         try rebuild()
@@ -295,6 +491,7 @@ public final class SiteWorkspace {
     public func sync(client: GitHubClient, progress: Progress? = nil, publishedBranch: String? = nil) async throws -> SyncResult {
         isSyncing = true
         defer { isSyncing = false }
+        try flushEditorStates()
         if !state.conflicts.isEmpty { return .conflicts(state.conflicts.count) }
         if !state.existsOnRemote {
             try await client.createBranch(branch, from: state.base.commit)
@@ -315,7 +512,10 @@ public final class SiteWorkspace {
             state.deletedOnGitHubAt = nil
             try store.saveBranchState(state)
         }
-        if head != state.base.commit {
+        // A copy saved before editor state files were synced (no `states` in its base) compares GitHub's with none, even
+        // when GitHub has not moved: its states then arrive like any GitHub change, merged with this device's or
+        // reported as draft conflicts, before anything made without them is pushed over them.
+        if head != state.base.commit || state.base.states == nil {
             let remote = try await Self.fetchSnapshot(commit: head, client: client, store: store, progress: progress)
             let found = conflicts(with: remote)
             if !found.isEmpty {
@@ -330,11 +530,9 @@ public final class SiteWorkspace {
         while let next = queue.first {
             let newHead = try await client.commit(next.changes, message: next.message, to: branch, expectedHead: state.base.commit)
             var base = state.base
-            for c in next.changes {
-                if let content = c.content { base.files[c.path] = try store.storeObject(content) } else { base.files[c.path] = nil }
-            }
+            for c in next.changes { base.apply(c.path, sha: try c.content.map { try store.storeObject($0) }) }
             base.commit = newHead
-            for c in next.changes { state.fileDates = (state.fileDates ?? [:]).merging([c.path: .now]) { $1 } }
+            for c in next.changes where Self.isNodePath(c.path) { state.fileDates = (state.fileDates ?? [:]).merging([c.path: .now]) { $1 } }
             state.base = base
             queue.removeFirst()
             // Queue first: if the app stops between the two writes, a commit is never pushed twice.
@@ -363,13 +561,11 @@ public final class SiteWorkspace {
         guard let head = try? await client.headSHA(of: publishedBranch) else { return }
         guard head != state.publishedCommit || state.publishedFiles == nil else { return }
         guard let entries = try? await client.tree(ofCommit: head) else { return }
-        state.publishedFiles = Dictionary(uniqueKeysWithValues: entries.filter(Self.isNodeEntry).map { ($0.path, $0.sha) })
+        state.publishedFiles = Dictionary(uniqueKeysWithValues: entries.filter(SitePath.isNodeEntry).map { ($0.path, $0.sha) })
         state.publishedCommit = head
     }
 
-    static func isNodeEntry(_ e: TreeEntry) -> Bool {
-        e.isBlob && e.path.hasPrefix(nodesDir) && e.path.hasSuffix(".md") && !e.path.dropFirst(nodesDir.count).contains("/")
-    }
+    static func isNodePath(_ path: String) -> Bool { if case .node? = SitePath.kind(path) { true } else { false } }
 
     /// Fetches the last-commit date of every node file that has none yet (all of them after a download). Best effort:
     /// a file whose date cannot be fetched now is tried again at the next sync. Eight requests at a time.
@@ -446,17 +642,39 @@ public final class SiteWorkspace {
         let touched = Set(queue.flatMap { $0.changes.map(\.path) })
             .union(store.working(branch).keys.map(Self.path))
             .union(state.deleted.map(Self.path))
-        return Set(state.base.files.keys).union(remote.files.keys).sorted().compactMap { path in
+        // Nodes with a draft here (uncommitted or queued): deleting one on GitHub would silently take the draft along.
+        let drafted = Set((draftChanges.map(\.path) + queue.flatMap(\.changes).map(\.path)).compactMap { path -> String? in
+            if case let .state(slug)? = SitePath.kind(path) { Self.path(slug) } else { nil }
+        })
+        let nodeConflicts = Set(state.base.files.keys).union(remote.files.keys).sorted().compactMap { path -> Conflict? in
             let b = state.base.files[path], r = remote.files[path]
-            guard b != r, touched.contains(path) else { return nil }
+            guard b != r, touched.contains(path) || (r == nil && drafted.contains(path)) else { return nil }
             // Same result on both sides is not a conflict.
             if r == localText(path: path).map(GitBlob.sha) { return nil }
             return Conflict(path: path, baseSHA: b, remoteSHA: r)
         }
+        // Editor state: only a draft changed differently on both sides; the tab, mode and cursor are merged silently.
+        let baseStates = state.base.states ?? [:], remoteStates = remote.states ?? [:]
+        let stateConflicts = Set(baseStates.keys).union(remoteStates.keys).sorted().compactMap { path -> Conflict? in
+            let b = baseStates[path], r = remoteStates[path]
+            guard b != r, case let .state(slug)? = SitePath.kind(path) else { return nil }
+            let base = store.editorState(sha: b), theirs = store.editorState(sha: r)
+            // The queued versions count too: a working state can undo a queued draft (discarded after committing).
+            let queued = queue.flatMap(\.changes).filter { $0.path == path }.compactMap { $0.content.flatMap(EditorState.init(json:)) }
+            let local = [editorState(slug)] + queued
+            guard local.contains(where: { EditorState.merge(base: base, local: $0, remote: theirs) == .draftConflict }) else { return nil }
+            return Conflict(path: path, baseSHA: b, remoteSHA: r)
+        }
+        return nodeConflicts + stateConflicts
     }
 
     /// Makes GitHub's snapshot the new base. Local queued and working changes stay on top of it.
+    /// Editor state files GitHub changed are merged with this device's (EditorState.merge); a node whose content
+    /// changed without a newer state opens on its new content (issue #15). Both bump `remoteRevision`.
     private func adopt(_ remote: Snapshot) throws {
+        try flushEditorStates()
+        let before = nodes.mapValues { $0.rendered() }
+        let arrived = try carryStates(from: state.base.states ?? [:], to: remote.states ?? [:])
         // Files GitHub changed get their dates fetched again at the end of this sync.
         for (path, sha) in remote.files where state.base.files[path] != sha { state.fileDates?[path] = nil }
         state.base = remote
@@ -464,24 +682,88 @@ public final class SiteWorkspace {
         state.conflicts = []
         try store.saveBranchState(state)
         try rebuild()
+        // A node gone from GitHub takes its uncommitted editor state with it (a draft on it was a conflict, settled).
+        for slug in store.workingStates(branch).keys where nodes[slug] == nil && !state.deleted.contains(slug) {
+            try dropEditorState(slug)
+        }
+        for (slug, node) in nodes where node.rendered() != before[slug] {
+            if !arrived.contains(slug) {
+                editorStates[slug] = EditorState.afterRemoteChange(body: node.body, keeping: editorStates[slug])
+                try saveState(slug)
+            }
+            remoteRevision[slug, default: 0] += 1
+        }
+        for slug in arrived where nodes[slug]?.rendered() == before[slug] { remoteRevision[slug, default: 0] += 1 }
+    }
+
+    /// Puts this device's queued and working editor states on top of GitHub's state files (`old` -> `new`), merging
+    /// each with what changed under it (EditorState.merge). Returns the slugs whose state file changed. Run before
+    /// `new` becomes the base.
+    private func carryStates(from old: [String: String], to new: [String: String]) throws -> Set<String> {
+        let working = store.workingStates(branch)
+        var arrived: Set<String> = []
+        var queueChanged = false
+        for path in Set(old.keys).union(new.keys) where old[path] != new[path] {
+            guard case let .state(slug)? = SitePath.kind(path) else { continue }
+            arrived.insert(slug)
+            let base = store.editorState(sha: old[path]), theirs = store.editorState(sha: new[path])
+            // Queued versions were made on top of the old base: merge GitHub's draft into them, or pushing them would
+            // put back the old one.
+            for i in queue.indices {
+                for j in queue[i].changes.indices where queue[i].changes[j].path == path {
+                    guard let text = queue[i].changes[j].content, let mine = EditorState(json: text),
+                          case let .merged(m) = EditorState.merge(base: base, local: mine, remote: theirs) else { continue }
+                    queue[i].changes[j].content = m.rendered()
+                    queueChanged = true
+                }
+            }
+            guard let text = working[slug], let mine = EditorState(json: text) else { continue }
+            // The working state was made on base + queue, and lies on the last queued version (merged above) or on
+            // GitHub's after this sync. Compared with the base alone, a queued draft discarded here would come back.
+            let below = committedStates[slug]
+            let newBelow = queue.flatMap(\.changes).last { $0.path == path }.map { $0.content.flatMap(EditorState.init(json:)) } ?? theirs
+            if !mine.draftDiffers(from: below) {
+                try store.removeWorkingState(slug: slug, branch: branch) // nothing of value here: what is below applies
+            } else if case let .merged(m) = EditorState.merge(base: below, local: mine, remote: newBelow) {
+                try store.saveWorkingState(m.rendered(), slug: slug, branch: branch)
+            } // a draft conflict settled as "keep mine" keeps the local draft
+        }
+        if queueChanged { try store.saveQueue(queue, for: branch) }
+        return arrived
     }
 
     /// Settles one conflicted file. When the last one is settled, GitHub's snapshot becomes the base; sync again to push.
     public func resolve(_ path: String, with resolution: ConflictResolution) throws {
         guard state.conflicts.contains(where: { $0.path == path }) else { return }
-        let slug = Self.slug(path)
-        switch resolution {
-        case .mine:
+        try flushEditorStates()
+        switch (SitePath.kind(path), resolution) {
+        case let (.node(slug)?, .mine):
+            // A node kept for its draft alone (deleted on GitHub, otherwise unchanged here) is put back as an edit.
+            if let text = localText(path: path), store.working(branch)[slug] == nil,
+               !queue.contains(where: { $0.changes.contains { $0.path == path } }) {
+                try store.saveWorking(text, slug: slug, branch: branch)
+            }
+        case (_, .mine), (nil, _):
             break
-        case .theirs:
-            for i in queue.indices { queue[i].changes.removeAll { $0.path == path } }
-            queue.removeAll { $0.changes.isEmpty }
-            try store.saveQueue(queue, for: branch)
+        case let (.node(slug)?, .theirs):
+            try dropQueued(path)
             try store.removeWorking(slug: slug, branch: branch)
             state.deleted.removeAll { $0 == slug }
-        case let .edited(text):
+            if conflicts.first(where: { $0.path == path })?.remoteSHA == nil { // gone from GitHub: its draft goes too
+                try dropQueued(SitePath.statePath(slug))
+                try dropEditorState(slug)
+            }
+        case let (.node(slug)?, .edited(text)):
             try store.saveWorking(text, slug: slug, branch: branch)
             state.deleted.removeAll { $0 == slug }
+        case let (.state(slug)?, .theirs):
+            try dropQueued(path)
+            try store.removeWorkingState(slug: slug, branch: branch)
+        case let (.state(slug)?, .edited(text)):
+            // The merged draft becomes this device's; the adopt below keeps it over GitHub's.
+            var s = editorState(slug)
+            if text.isEmpty { s.draft = nil } else { var d = s.draft ?? .init(text: text, base: nil); d.text = text; s.draft = d }
+            try store.saveWorkingState(s.rendered(), slug: slug, branch: branch)
         }
         state.conflicts.removeAll { $0.path == path }
         if state.conflicts.isEmpty, let remote = state.pendingRemote {
@@ -490,6 +772,13 @@ public final class SiteWorkspace {
             try store.saveBranchState(state)
             try rebuild()
         }
+    }
+
+    /// Removes a path from every queued commit, dropping commits left empty.
+    private func dropQueued(_ path: String) throws {
+        for i in queue.indices { queue[i].changes.removeAll { $0.path == path } }
+        queue.removeAll { $0.changes.isEmpty }
+        try store.saveQueue(queue, for: branch)
     }
 
     // MARK: Branches
@@ -507,8 +796,9 @@ public final class SiteWorkspace {
     /// conflicts, resolved file by file as usual. This branch's local copy is removed afterwards.
     public func moveEdits(toNewBranch name: String, from base: String, client: GitHubClient, progress: Progress? = nil) async throws -> SiteWorkspace {
         guard store.branchState(named: name) == nil else { throw WorkspaceError.branchExists(name) }
+        try flushEditorStates()
         let target = try await Self.fetchSnapshot(base, client: client, store: store, progress: progress)
-        let touched = Set(queue.flatMap { $0.changes.map(\.path) })
+        let touched = Set(queue.flatMap { $0.changes.map(\.path) }.filter(Self.isNodePath))
             .union(store.working(branch).keys.map(Self.path))
             .union(state.deleted.map(Self.path))
         var newState = BranchState(branch: name, base: target, existsOnRemote: false, fetchedAt: .now)
@@ -524,6 +814,24 @@ public final class SiteWorkspace {
             }
         }
         for (slug, text) in edits { try store.saveWorking(text, slug: slug, branch: name) }
+        // Drafts not on GitHub go along too (the tab and cursor of other nodes do not).
+        for (slug, mine) in editorStates where nodes[slug] != nil {
+            let path = SitePath.statePath(slug)
+            let old = store.editorState(sha: state.base.states?[path])
+            guard mine.draftDiffers(from: old) else { continue }
+            try store.saveWorkingState(mine.rendered(), slug: slug, branch: name)
+            let nodePath = Self.path(slug)
+            if target.files[nodePath] == nil, edits[slug] == nil, let text = localText(path: nodePath) {
+                // The new base deleted the node: it goes along for its draft, a conflict to settle (as in sync).
+                try store.saveWorking(text, slug: slug, branch: name)
+                newState.conflicts.append(Conflict(path: nodePath, baseSHA: state.base.files[nodePath], remoteSHA: nil))
+            }
+            let theirsSHA = target.states?[path]
+            let theirs = store.editorState(sha: theirsSHA)
+            if EditorState.merge(base: old, local: mine, remote: theirs) == .draftConflict {
+                newState.conflicts.append(Conflict(path: path, baseSHA: state.base.states?[path], remoteSHA: theirsSHA))
+            }
+        }
         try store.saveBranchState(newState)
         let moved = try SiteWorkspace(store: store, state: newState)
         try store.removeBranch(branch)
@@ -535,6 +843,7 @@ public final class SiteWorkspace {
     public func branchOff(_ name: String) throws -> SiteWorkspace {
         guard queue.isEmpty else { throw WorkspaceError.queuedCommits }
         guard store.branchState(named: name) == nil else { throw WorkspaceError.branchExists(name) }
+        try flushEditorStates()
         var newState = BranchState(branch: name, base: state.base, existsOnRemote: false, fetchedAt: state.fetchedAt)
         newState.fileDates = state.fileDates
         newState.deleted = state.deleted
@@ -542,6 +851,10 @@ public final class SiteWorkspace {
         for (slug, text) in store.working(branch) {
             try store.saveWorking(text, slug: slug, branch: name)
             try store.removeWorking(slug: slug, branch: branch)
+        }
+        for (slug, text) in store.workingStates(branch) {
+            try store.saveWorkingState(text, slug: slug, branch: name)
+            try store.removeWorkingState(slug: slug, branch: branch)
         }
         state.deleted = []
         try store.saveBranchState(state)
@@ -557,14 +870,31 @@ public final class SiteWorkspace {
             guard let text = store.object(sha) else { throw WorkspaceError.missingObject(path) }
             committed[Self.slug(path)] = text
         }
+        var states: [String: String] = [:]
+        for (path, sha) in state.base.states ?? [:] {
+            if case let .state(slug)? = SitePath.kind(path), let text = store.object(sha) { states[slug] = text }
+        }
         for qc in queue {
-            for c in qc.changes { committed[Self.slug(c.path)] = c.content }
+            for c in qc.changes {
+                switch SitePath.kind(c.path) {
+                case let .node(slug)?: committed[slug] = c.content
+                case let .state(slug)?: states[slug] = c.content
+                case nil: break // not a file this app tracks
+                }
+            }
         }
         var display: [String: NodeFile] = [:]
         for (slug, text) in committed { display[slug] = try NodeFile(slug: slug, text: text) }
         for (slug, text) in store.working(branch) { display[slug] = try NodeFile(slug: slug, text: text) }
         for slug in state.deleted { display[slug] = nil }
+        let parsed = states.mapValues { EditorState(json: $0) ?? EditorState() }
+        var editor = parsed
+        for (slug, text) in store.workingStates(branch) { if let s = EditorState(json: text) { editor[slug] = s } }
+        // Changes not written yet stay (rebuilds happen while the cursor-move batch is pending).
+        for slug in unsavedStates { editor[slug] = editorStates[slug] }
         committedText = committed
+        committedStates = parsed
+        editorStates = editor
         nodes = display
         try refreshDeleted()
     }

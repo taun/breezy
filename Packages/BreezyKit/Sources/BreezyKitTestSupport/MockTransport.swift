@@ -77,9 +77,28 @@ extension MockTransport {
         return m
     }
 
-    /// GitHub's branch moves to `commit`, whose tree is the original one with `changing` applied (text, or nil to delete).
-    public func remoteMoves(to commit: String, changing: [String: String?]) {
-        var files: [String: String] = ["src/nodes/a.md": "ba", "src/nodes/b.md": "bb"]
+    /// The editor state file `siteWithStates` gives node a (blob "sa"): Body tab, cursor at 3, and a draft.
+    public static let stateA = "{\n  \"draft\" : {\n    \"base\" : \"x\",\n    \"text\" : \"Old draft\"\n  },\n  \"editor\" : {\n    \"selection\" : [\n      3,\n      3\n    ],\n    \"tab\" : \"body\"\n  },\n  \"version\" : 1\n}\n"
+
+    /// `site()` plus editor state files: one for node a, and two that must be ignored (nested, and outside nodes/).
+    public static func siteWithStates() -> MockTransport {
+        let m = site()
+        m.on("GET /git/trees/t1?recursive=1", ["tree": [
+            ["path": "src/nodes/a.md", "type": "blob", "sha": "ba"],
+            ["path": "src/nodes/b.md", "type": "blob", "sha": "bb"],
+            ["path": ".breezy/nodes/a.json", "type": "blob", "sha": "sa"],
+            ["path": ".breezy/nodes/sub/x.json", "type": "blob", "sha": "sx"],
+            ["path": ".breezy/other.json", "type": "blob", "sha": "so"],
+            ["path": "src/assets/images/x.png", "type": "blob", "sha": "bx"],
+        ]])
+        m.on("GET /git/blobs/sa", ["content": Data(stateA.utf8).base64EncodedString(), "encoding": "base64"])
+        return m
+    }
+
+    /// GitHub's branch moves to `commit`, whose tree is `base` (by default `site()`'s two nodes) with `changing`
+    /// applied (text, or nil to delete).
+    public func remoteMoves(to commit: String, changing: [String: String?], base: [String: String] = ["src/nodes/a.md": "ba", "src/nodes/b.md": "bb"]) {
+        var files = base
         for (path, text) in changing {
             if let text {
                 let sha = GitBlob.sha(of: text)

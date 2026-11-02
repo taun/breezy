@@ -6,6 +6,8 @@
 #   device-name defaults to the first available iPhone; screenshot defaults to $TMPDIR/breezy-sim.png.
 # Env:   BREEZY_SITE_DIR  site repo (default ../taun.github.io)
 #        BREEZY_BRANCH    branch name to present the seeded copy as (default: the site repo's current branch)
+#        BREEZY_STATES    editor states to preset as uncommitted, "slug=<json file>" pairs (space-separated), e.g.
+#                         'history-of-flash=/tmp/s.json' with {"version":1,"editor":{"tab":"body","selection":[10,10]}}
 #        BREEZY_DEFAULTS  extra "key=value" pairs (space-separated) written to the app's preferences before launch,
 #                         e.g. 'root.compactColumn=detail editor.focus=history-of-flash|title' to test state restoration
 #        BREEZY_DEMO_ACTIVITY  debug builds: show a fake activity banner, "title|done|total" (e.g. 'Downloading main…|12|41')
@@ -52,6 +54,15 @@ for name in sorted(os.listdir(f"{site}/src/nodes")):
     sha = blob_sha(data)
     open(f"{root}/objects/{sha}", "wb").write(data)
     files[f"src/nodes/{name}"] = sha
+# Editor state files (.breezy/nodes/<slug>.json), as a download keeps them.
+states = {}
+if os.path.isdir(f"{site}/.breezy/nodes"):
+    for name in sorted(os.listdir(f"{site}/.breezy/nodes")):
+        if name.endswith(".json"):
+            data = open(f"{site}/.breezy/nodes/{name}", "rb").read()
+            sha = blob_sha(data)
+            open(f"{root}/objects/{sha}", "wb").write(data)
+            states[f".breezy/nodes/{name}"] = sha
 # Asset shas for all of src/assets; image contents only for the images the nodes show, as a sync would keep them.
 asset_shas = {}
 for d, _, fs in os.walk(f"{site}/src/assets"):
@@ -67,11 +78,15 @@ for name in os.listdir(f"{site}/src/nodes"):
                 open(f"{root}/objects/{asset_shas[src]}", "wb").write(open(f"{site}/src{src}", "rb").read())
 head = subprocess.check_output(["git", "-C", site, "rev-parse", "HEAD"]).decode().strip()
 os.makedirs(f"{root}/branches/{branch}", exist_ok=True)
-json.dump({"version": 1, "branch": branch, "base": {"commit": head, "files": files, "assets": assets, "assetSHAs": asset_shas},
+json.dump({"version": 1, "branch": branch, "base": {"commit": head, "files": files, "assets": assets, "assetSHAs": asset_shas, "states": states},
            "existsOnRemote": True, "deleted": [], "conflicts": []}, open(f"{root}/branches/{branch}/state.json", "w"))
 json.dump({"defaultBranch": "main", "remoteBranches": sorted({"main", branch}), "lastBranch": branch},
           open(f"{root}/repo.json", "w"))
-print(f"Seeded {len(files)} nodes as branch '{branch}'")
+for pair in os.environ.get("BREEZY_STATES", "").split():
+    slug, path = pair.split("=", 1)
+    os.makedirs(f"{root}/branches/{branch}/working-state", exist_ok=True)
+    open(f"{root}/branches/{branch}/working-state/{slug}.json", "wb").write(open(path, "rb").read())
+print(f"Seeded {len(files)} nodes and {len(states)} editor states as branch '{branch}'")
 PY
 
 for pair in ${BREEZY_DEFAULTS:-}; do

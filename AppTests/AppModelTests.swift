@@ -10,6 +10,7 @@ struct Harness {
     let model: AppModel
     let github: MockTransport
     let store: LocalStore
+    let defaults: UserDefaults
 
     init() {
         let github = MockTransport.site() // main at c1 with nodes a and b
@@ -20,6 +21,7 @@ struct Harness {
         let defaults = UserDefaults(suiteName: "breezy-app-tests-\(UUID().uuidString)")!
         self.github = github
         self.store = store
+        self.defaults = defaults
         model = AppModel(tokens: MemoryTokenStore("t"), defaults: defaults, transport: github, storeFor: { _ in store })
     }
 
@@ -236,5 +238,64 @@ struct Harness {
         #expect(issue == nil)
         #expect(h.github.count(issues) == 0)
         #expect(h.model.errorMessage != nil)
+    }
+}
+
+/// Issues #16 and #15: per-node editor state lives in the node's state file, not in this device's settings.
+@MainActor @Suite struct EditorStateAppTests {
+    @Test func draftsAndTheCursorFromOlderBuildsMoveIntoTheirNodes() async throws {
+        let h = Harness()
+        h.defaults.set("A rewrite", forKey: BodyDraft.key(branch: "main", slug: "a"))
+        h.defaults.set("Gone node", forKey: BodyDraft.key(branch: "main", slug: "zz"))
+        h.defaults.set("Other branch", forKey: BodyDraft.key(branch: "feature", slug: "a"))
+        h.defaults.set("b|2|4", forKey: "editor.bodySelection")
+        h.defaults.set(true, forKey: "editor.preview")
+        await h.connect()
+        let ws = try #require(h.model.workspace)
+        #expect(ws.editorState("a").draft?.text == "A rewrite")
+        #expect(ws.editorState("b").selection == [2, 4] && ws.editorState("b").mode == .preview)
+        #expect(ws.changedNodes.map(\.slug) == ["a"]) // the draft is to be committed; the cursor is not
+        #expect(h.defaults.object(forKey: BodyDraft.key(branch: "main", slug: "a")) == nil)
+        #expect(h.defaults.object(forKey: "editor.bodySelection") == nil && h.defaults.object(forKey: "editor.preview") == nil)
+        #expect(h.defaults.string(forKey: BodyDraft.key(branch: "feature", slug: "a")) == "Other branch") // when opened
+        #expect(h.defaults.string(forKey: BodyDraft.key(branch: "main", slug: "zz")) == "Gone node") // no such node here
+    }
+
+    @Test func aDraftFromAnOlderBuildIsAddedToOneThatSyncedMeanwhile() async throws {
+        let h = Harness()
+        await h.connect()
+        let ws = try #require(h.model.workspace)
+        try ws.setDraft("a", "From the Mac")
+        h.defaults.set("From this iPhone", forKey: BodyDraft.key(branch: "main", slug: "a"))
+        h.defaults.set("From the Mac", forKey: BodyDraft.key(branch: "main", slug: "b"))
+        try ws.setDraft("b", "From the Mac")
+        h.model.importLegacyEditorState(ws)
+        #expect(ws.editorState("a").draft?.text == "From the Mac\n\nFrom this iPhone") // neither is lost
+        #expect(ws.editorState("b").draft?.text == "From the Mac") // the same draft is not repeated
+        #expect(h.defaults.object(forKey: BodyDraft.key(branch: "main", slug: "a")) == nil)
+    }
+
+    @Test func aNodeChangedOnGitHubOpensOnItsBodyWithTheCursorAtTheEnd() async throws {
+        let h = Harness()
+        await h.connect()
+        let ws = try #require(h.model.workspace)
+        ws.setEditor("a") { $0.tab = .links; $0.selection = [0, 0] }
+        h.github.remoteMoves(to: "c9", changing: ["src/nodes/a.md": "---\ntitle: \"A\"\n---\n\nRewritten elsewhere\n"])
+        await h.model.sync()
+        let body = try #require(ws.nodes["a"]).body
+        #expect(ws.editorState("a").tab == .body && ws.editorState("a").selection == [body.utf16.count, body.utf16.count])
+        #expect(ws.remoteRevision["a"] == 1)
+        #expect(!ws.hasChanges)
+    }
+
+    @Test func theCommitCountIgnoresCursorMovesButCountsDrafts() async throws {
+        let h = Harness()
+        await h.connect()
+        let ws = try #require(h.model.workspace)
+        ws.setEditor("a") { $0.selection = [3, 3] }
+        #expect(ws.changedNodes.isEmpty && !ws.hasChanges)
+        try ws.setDraft("b", "New text")
+        #expect(ws.changedNodes.map(\.slug) == ["b"] && ws.hasChanges)
+        #expect(CommitView.caption(ws.changedNodes[0]) == "draft started")
     }
 }

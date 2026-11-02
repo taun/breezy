@@ -10,17 +10,25 @@ struct CommitView: View {
         if let ws = model.workspace {
             Form {
                 Section {
-                    ForEach(ws.changes, id: \.path) { c in
-                        let slug = ((c.path as NSString).lastPathComponent as NSString).deletingPathExtension
-                        Label((c.path as NSString).lastPathComponent, systemImage: c.content == nil ? "trash" : "pencil")
-                            .foregroundStyle(c.content == nil ? .red : .primary)
-                            .swipeActions { Button("Revert") { revert(slug, in: ws) }.tint(.orange) }
-                            .contextMenu { Button(c.content == nil ? "Restore" : "Revert Changes") { revert(slug, in: ws) } }
+                    ForEach(ws.changedNodes) { c in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Label("\(c.slug).md", systemImage: c.file == .deleted ? "trash" : c.file == nil ? "doc.text" : "pencil")
+                                .foregroundStyle(c.file == .deleted ? .red : .primary)
+                            Text(Self.caption(c)).font(.caption).foregroundStyle(.secondary)
+                        }
+                        .swipeActions {
+                            if c.file != nil { Button("Revert") { revert(c.slug, in: ws) }.tint(.orange) }
+                            if c.draft != nil { Button("Revert Draft") { revertDraft(c.slug, in: ws) }.tint(.gray) }
+                        }
+                        .contextMenu {
+                            if c.file != nil { Button(c.file == .deleted ? "Restore" : "Revert Changes") { revert(c.slug, in: ws) } }
+                            if c.draft != nil { Button("Revert Draft") { revertDraft(c.slug, in: ws) } }
+                        }
                     }
                 } header: {
                     Text("Changes on \(ws.branch)")
                 } footer: {
-                    Text("Swipe or long-press a change to undo it, including restoring a deleted node.")
+                    Text("Swipe or long-press a change to undo it, including restoring a deleted node. Drafts are committed too, so they can be continued on your other devices.")
                 }
                 Section("Message") {
                     TextField("Describe the change", text: $message, axis: .vertical)
@@ -50,7 +58,7 @@ struct CommitView: View {
                     .disabled(message.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
-            .onChange(of: ws.changes.isEmpty) { _, empty in if empty { message = ""; dismiss() } }
+            .onChange(of: ws.hasChanges) { _, has in if !has { message = ""; dismiss() } }
             .onAppear {
                 if message.isEmpty { message = ws.suggestedCommitMessage }
             }
@@ -60,5 +68,27 @@ struct CommitView: View {
     private func revert(_ slug: String, in ws: SiteWorkspace) {
         do { try ws.revert(slug) } catch { model.errorMessage = error.localizedDescription }
         message = ws.suggestedCommitMessage
+    }
+
+    private func revertDraft(_ slug: String, in ws: SiteWorkspace) {
+        do { try ws.revertDraft(slug) } catch { model.errorMessage = error.localizedDescription }
+        message = ws.suggestedCommitMessage
+    }
+
+    /// "edited", "draft updated", "edited · draft used"…
+    static func caption(_ c: SiteWorkspace.NodeChange) -> String {
+        let file: String? = switch c.file {
+        case .added: "added"
+        case .edited: "edited"
+        case .deleted: "deleted"
+        case nil: nil
+        }
+        let draft: String? = switch c.draft {
+        case .started: "draft started"
+        case .updated: "draft updated"
+        case .removed: c.file == .edited ? "draft used" : "draft discarded"
+        case nil: nil
+        }
+        return [file, draft].compactMap { $0 }.joined(separator: " · ")
     }
 }

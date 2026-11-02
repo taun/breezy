@@ -24,7 +24,16 @@ final class AppModel {
 
     private(set) var store: LocalStore?
     private(set) var repoState = RepoState()
-    private(set) var workspace: SiteWorkspace?
+    private(set) var workspace: SiteWorkspace? {
+        didSet {
+            guard workspace !== oldValue else { return }
+            // Cursor moves not written yet; dropped for a copy that was just removed (moved edits, published branch).
+            if let old = oldValue {
+                if old.store.branchState(named: old.branch) != nil { try? old.flushEditorStates() } else { old.cancelPendingStateWrites() }
+            }
+            if let workspace { importLegacyEditorState(workspace) }
+        }
+    }
     private(set) var pullRequests: [PullRequest] = []
 
     /// Whether the device has a network path. Syncing is skipped while false.
@@ -508,12 +517,15 @@ final class AppModel {
             return false
         }
         let branch = ws.branch
+        // When only editor state files differ (drafts, cursors), the site does not deploy (paths-ignore): nothing to watch.
+        let files = await comparison()?.files
+        let changesSite = files.map { !$0.allSatisfy { $0.hasPrefix(SitePath.statesDir) } } ?? true
         begin("Publishing \(branch)…")
         do {
             let result = try await Publisher.publish(branch: branch, into: defaultBranch, title: "Publish \(branch)",
                                                      method: method, deleteBranch: deleteBranch, client: client)
             end()
-            watchDeploy(result.mergeCommit)
+            if changesSite { watchDeploy(result.mergeCommit) } else { deployStatus = .none }
             if deleteBranch {
                 repoState.remoteBranches.removeAll { $0 == branch }
                 await switchBranch(defaultBranch)
@@ -554,6 +566,42 @@ final class AppModel {
                 if Task.isCancelled { return }
             }
             self?.deployStatus = .unknown
+        }
+    }
+
+    // MARK: Editor state from older builds
+
+    /// Builds before editor state files kept drafts, the body cursor and the Edit/Draft/Preview mode in settings on
+    /// this device. Moves what belongs to this branch's nodes into their editor state (drafts then show in Commit,
+    /// to be synced), and removes those keys. Drafts of other branches wait until those branches are opened.
+    func importLegacyEditorState(_ ws: SiteWorkspace) {
+        for (slug, text) in BodyDraft.legacyDrafts(in: defaults.dictionaryRepresentation(), branch: ws.branch) where ws.nodes[slug] != nil {
+            // The key goes only once the draft is safely in the node's state. One that synced from another device
+            // meanwhile keeps its text, followed by this one, so neither is lost (Commit then lists the change).
+            let existing = ws.editorState(slug).draft?.text
+            if existing != text {
+                guard (try? ws.setDraft(slug, existing.map { "\($0)\n\n\(text)" } ?? text)) != nil else { continue }
+            }
+            defaults.removeObject(forKey: BodyDraft.key(branch: ws.branch, slug: slug))
+        }
+        // The cursor, and the mode it was in: one node's, named in the key.
+        if let stored = defaults.string(forKey: "editor.bodySelection") {
+            let p = stored.split(separator: "|")
+            if p.count == 3, let a = Int(p[1]), let b = Int(p[2]), ws.nodes[String(p[0])] != nil {
+                let slug = String(p[0])
+                let preview = defaults.bool(forKey: "editor.preview"), draft = defaults.bool(forKey: "editor.draft")
+                ws.setEditor(slug) { s in
+                    if s.selection == nil { s.selection = [min(a, b), max(a, b)] }
+                    if s.mode == nil, preview || draft { s.mode = preview ? .preview : .draft }
+                }
+                defaults.removeObject(forKey: "editor.bodySelection")
+                defaults.removeObject(forKey: "editor.preview")
+                defaults.removeObject(forKey: "editor.draft")
+            }
+        } else {
+            // The mode alone names no node: nothing to move it to.
+            defaults.removeObject(forKey: "editor.preview")
+            defaults.removeObject(forKey: "editor.draft")
         }
     }
 

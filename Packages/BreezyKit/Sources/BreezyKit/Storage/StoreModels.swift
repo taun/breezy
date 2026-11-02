@@ -24,12 +24,28 @@ public struct Snapshot: Codable, Equatable, Sendable {
     /// Asset site path ("/assets/…") -> git blob sha, so the images a node shows can be fetched and cached by sha.
     /// Optional for older state files; sync fills it in.
     public var assetSHAs: [String: String]?
+    /// Editor state files (`.breezy/nodes/<slug>.json`, see EditorState): path -> git blob sha. Kept apart from
+    /// `files`, which holds node files only. Optional for older state files; sync fills it in.
+    public var states: [String: String]?
 
-    public init(commit: String, files: [String: String], assets: [String], assetSHAs: [String: String]? = nil) {
+    public init(commit: String, files: [String: String], assets: [String], assetSHAs: [String: String]? = nil, states: [String: String]? = nil) {
         self.commit = commit
         self.files = files
         self.assets = assets
         self.assetSHAs = assetSHAs
+        self.states = states
+    }
+
+    /// Records a pushed file (nil sha: deleted) in the map its path belongs to; other paths are not tracked.
+    mutating func apply(_ path: String, sha: String?) {
+        switch SitePath.kind(path) {
+        case .node: files[path] = sha
+        case .state:
+            var s = states ?? [:]
+            s[path] = sha
+            states = s
+        case nil: break
+        }
     }
 }
 

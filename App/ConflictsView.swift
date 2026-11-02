@@ -20,7 +20,7 @@ struct ConflictsView: View {
                 }
                 ForEach(ws.conflicts) { c in
                     VStack(alignment: .leading, spacing: 8) {
-                        Text((c.path as NSString).lastPathComponent).bold()
+                        Text(title(c, ws)).bold()
                         Text(summary(c, ws)).font(.caption).foregroundStyle(.secondary)
                         HStack {
                             Button("Keep Mine") { Task { await model.resolve(c.path, with: .mine) } }
@@ -35,18 +35,28 @@ struct ConflictsView: View {
             .navigationTitle("Conflicts")
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Later") { dismiss() } } }
             .sheet(item: editing) { c in
-                NavigationStack { MergeEditor(conflict: c, mine: ws.localText(path: c.path) ?? "", theirs: ws.text(sha: c.remoteSHA) ?? "") }
+                let sides = ws.conflictSides(c)
+                NavigationStack { MergeEditor(conflict: c, isDraft: sides.isDraft, mine: sides.mine ?? "", theirs: sides.theirs ?? "") }
                     .macSheetFrame(minWidth: 640, minHeight: 560)
                     .environment(model)
             }
         }
     }
 
+    private func title(_ c: Conflict, _ ws: SiteWorkspace) -> String { conflictTitle(c.path, isDraft: ws.conflictSides(c).isDraft) }
+
     private func summary(_ c: Conflict, _ ws: SiteWorkspace) -> String {
+        if ws.conflictSides(c).isDraft { return "draft changed here and on GitHub" }
         let mine = ws.localText(path: c.path) == nil ? "deleted here" : "edited here"
         let theirs = c.remoteSHA == nil ? "deleted on GitHub" : c.baseSHA == nil ? "added on GitHub" : "edited on GitHub"
         return "\(mine), \(theirs)"
     }
+}
+
+/// The name a conflict is shown under: the file, or for a draft (kept in the node's editor state file) the node's file.
+private func conflictTitle(_ path: String, isDraft: Bool) -> String {
+    let name = (path as NSString).lastPathComponent
+    return isDraft ? "\((name as NSString).deletingPathExtension).md — draft" : name
 }
 
 /// Shows GitHub's version beside an editable copy of the local one; the result becomes an uncommitted edit.
@@ -54,6 +64,8 @@ struct MergeEditor: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let conflict: Conflict
+    /// A node's draft (any text) rather than a node file (front matter required).
+    var isDraft = false
     let mine: String
     let theirs: String
     // The draft and the file it belongs to, kept across relaunches.
@@ -72,7 +84,7 @@ struct MergeEditor: View {
             }
         }
         .formStyle(.grouped)
-        .navigationTitle((conflict.path as NSString).lastPathComponent)
+        .navigationTitle(conflictTitle(conflict.path, isDraft: isDraft))
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) {
@@ -83,7 +95,7 @@ struct MergeEditor: View {
                         dismiss()
                     }
                 }
-                .disabled(!text.hasPrefix("---\n"))
+                .disabled(!isDraft && !text.hasPrefix("---\n"))
             }
         }
         .onAppear {

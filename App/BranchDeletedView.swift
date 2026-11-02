@@ -17,7 +17,7 @@ struct BranchDeletedView: View {
                 Text("“\(branch)” no longer exists on GitHub. It was probably published and deleted on another device. This device still has changes on it that are not on GitHub, and they are safe.")
                 if let ws = model.workspace {
                     if !ws.queue.isEmpty { LabeledContent("Commits not pushed", value: "\(ws.queue.count)") }
-                    if ws.hasChanges { LabeledContent("Uncommitted changes", value: "\(ws.changes.count)") }
+                    if ws.hasChanges { LabeledContent("Uncommitted changes", value: "\(ws.changedNodes.count)") }
                 }
             }
             Section {

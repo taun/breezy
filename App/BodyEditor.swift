@@ -1,12 +1,15 @@
 import SwiftUI
 
-/// The node body editor. On iOS 18 / macOS 15 and later it also remembers the cursor or selection per node,
-/// so a relaunch puts the cursor back exactly where it was.
+/// The node body editor. On iOS 18 / macOS 15 and later it also puts back the node's cursor or selection, kept in
+/// its editor state (EditorState.selection): after a relaunch, and on another device once the state has synced.
 struct BodyEditor: View {
     @Binding var text: String
     let slug: String
-    /// "slug|start|end" in UTF-16 offsets.
-    @AppStorage("editor.bodySelection") private var stored = ""
+    /// UTF-16 [start, end] to put back, from the node's editor state.
+    let selection: [Int]?
+    /// Changes when the cursor should be put back again (a sync brought in a new version of the node or its state).
+    let restoreToken: Int
+    let onSelection: ([Int]) -> Void
     /// The editor edits this local copy, not the model's text directly: a text view bound to a value that is
     /// re-read from the model on every keystroke resets its cursor (typing "Hello" gave "ElloH").
     @State private var local: String
@@ -14,16 +17,19 @@ struct BodyEditor: View {
     @State private var edits = 0
     #endif
 
-    init(text: Binding<String>, slug: String) {
+    init(text: Binding<String>, slug: String, selection: [Int]?, restoreToken: Int, onSelection: @escaping ([Int]) -> Void) {
         _text = text
         self.slug = slug
+        self.selection = selection
+        self.restoreToken = restoreToken
+        self.onSelection = onSelection
         _local = State(initialValue: text.wrappedValue)
     }
 
     var body: some View {
         editor
             #if os(iOS)
-            .background(TextKit1(edits: edits))
+            .background(TextKit1(edits: edits, selection: selection, restoreToken: restoreToken))
             #endif
             .onChange(of: local) { _, v in
                 #if os(iOS)
@@ -38,7 +44,7 @@ struct BodyEditor: View {
 
     @ViewBuilder private var editor: some View {
         if #available(iOS 18, macOS 15, *) {
-            SelectionRestoringEditor(text: $local, slug: slug, stored: $stored)
+            SelectionRestoringEditor(text: $local, selection: selection, restoreToken: restoreToken, onSelection: onSelection)
         } else {
             TextEditor(text: $local)
         }
@@ -48,27 +54,30 @@ struct BodyEditor: View {
 @available(iOS 18, macOS 15, *)
 private struct SelectionRestoringEditor: View {
     @Binding var text: String
-    let slug: String
-    @Binding var stored: String
-    @State private var selection: TextSelection?
+    let selection: [Int]?
+    let restoreToken: Int
+    let onSelection: ([Int]) -> Void
+    @State private var current: TextSelection?
 
     var body: some View {
-        TextEditor(text: $text, selection: $selection)
-            .onAppear { selection = restored() }
-            .onChange(of: selection) { _, s in save(s) }
+        TextEditor(text: $text, selection: $current)
+            .onAppear { current = restored() }
+            // After the new text is in place (it arrives in the same update), so the offsets apply to it.
+            .onChange(of: restoreToken) { Task { @MainActor in current = restored() } }
+            .onChange(of: current) { _, s in save(s) }
     }
 
     private func save(_ s: TextSelection?) {
         guard let s, case let .selection(range) = s.indices else { return }
-        stored = "\(slug)|\(range.lowerBound.utf16Offset(in: text))|\(range.upperBound.utf16Offset(in: text))"
+        let r = [range.lowerBound.utf16Offset(in: text), range.upperBound.utf16Offset(in: text)]
+        if r != selection { onSelection(r) }
     }
 
     private func restored() -> TextSelection? {
-        let p = stored.split(separator: "|")
-        guard p.count == 3, p[0] == slug, let a = Int(p[1]), let b = Int(p[2]) else { return nil }
+        guard let selection, selection.count == 2 else { return nil }
         let n = text.utf16.count
-        let lo = String.Index(utf16Offset: min(max(a, 0), n), in: text)
-        let hi = String.Index(utf16Offset: min(max(b, a, 0), n), in: text)
+        let lo = String.Index(utf16Offset: min(max(selection[0], 0), n), in: text)
+        let hi = String.Index(utf16Offset: min(max(selection[1], selection[0], 0), n), in: text)
         return TextSelection(range: lo..<hi)
     }
 }
@@ -80,18 +89,34 @@ private struct SelectionRestoringEditor: View {
 /// Laid out in full by TextKit 1, the text has its real height, so following the cursor lands on it. SwiftUI's
 /// TextEditor does not expose its text view, so this finds it: the nearest one around this background view that covers
 /// its center. If none is found (a future SwiftUI that renders differently), the editor keeps working as before.
+/// It also brings the cursor put back from the editor state into view: a text view without keyboard focus does not
+/// follow its cursor, so the end of a body that changed on GitHub (issue #15) stayed out of sight below the top.
 private struct TextKit1: UIViewRepresentable {
     /// Changes with every edit, so the check runs again if SwiftUI replaced the text view or it was not there yet.
     let edits: Int
+    /// UTF-16 [start, end] of the cursor put back, and the token that changes when it is put back again.
+    let selection: [Int]?
+    let restoreToken: Int
 
     func makeUIView(context: Context) -> Finder { Finder() }
-    func updateUIView(_ view: Finder, context: Context) { view.switchTextView() }
+
+    func updateUIView(_ view: Finder, context: Context) {
+        view.selection = selection
+        view.switchTextView()
+        if view.restoreToken != restoreToken {
+            view.restoreToken = restoreToken
+            // A run loop later: the text that came with the new state replaces the old one in a following update.
+            DispatchQueue.main.async { [weak view] in view?.scrollToSelection() }
+        }
+    }
 
     final class Finder: UIView {
         /// How far up to look: the text view is a near relative of this background view, not elsewhere in the window.
         private static let levels = 6
         /// The text view already handled; it is not searched for again while it is still the editor's.
         private weak var handled: UITextView?
+        var selection: [Int]?
+        var restoreToken: Int?
 
         override func didMoveToWindow() {
             super.didMoveToWindow()
@@ -116,6 +141,7 @@ private struct TextKit1: UIViewRepresentable {
                     if let textView = Self.textView(in: branch, covering: center) {
                         Self.layOutWholeText(textView)
                         handled = textView
+                        scrollToSelection() // the node just opened: show where its cursor was left
                         return
                     }
                 }
@@ -134,6 +160,15 @@ private struct TextKit1: UIViewRepresentable {
             let inset = textView.textContainerInset
             let height = layout.usedRect(for: textView.textContainer).maxY + inset.top + inset.bottom
             textView.contentSize = CGSize(width: textView.bounds.width, height: ceil(height))
+        }
+
+        /// Scrolls the text view to the saved cursor, clamped to the text. Without a saved cursor it stays as it is.
+        func scrollToSelection() {
+            guard let textView = handled, let selection, selection.count == 2 else { return }
+            let n = (textView.text as NSString).length
+            let lo = min(max(selection[0], 0), n), hi = min(max(selection[1], lo), n)
+            textView.layoutManager.ensureLayout(for: textView.textContainer)
+            textView.scrollRangeToVisible(NSRange(location: lo, length: hi - lo))
         }
 
         private static func covers(_ view: UIView, _ point: CGPoint) -> Bool {

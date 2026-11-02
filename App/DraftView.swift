@@ -2,22 +2,34 @@ import BreezyKit
 import SwiftUI
 
 /// The Body tab's Draft mode: the original text, read-only, beside a rewrite. Side by side where there is room; on
-/// iPhone (compact width) the two are pages to swipe between. The draft is kept per branch and node in `@AppStorage`,
-/// so it survives relaunch. "Use" replaces the body with the draft; "Discard" clears it.
+/// iPhone (compact width) the two are pages to swipe between. The draft is part of the node's editor state, saved as
+/// typed and synced with the node, so it survives relaunch and can be continued on another device. "Use" replaces the
+/// body with the draft; "Discard" clears it.
 struct DraftView: View {
     let original: String
     let compact: Bool
+    /// The body changed since the draft was started (here or on another device).
+    let isStale: Bool
+    let setDraft: (String) -> Void
+    let markSeen: () -> Void
     let use: (String) -> Void
-    @AppStorage private var draft: String
+    /// The text being edited; a local copy for the same reason as BodyEditor's (the cursor would reset while typing).
+    @State private var draft: String
     @AppStorage("editor.draftPage") private var pageRaw = Page.draft.rawValue
+    private let saved: String
 
     enum Page: String { case original, draft }
 
-    init(branch: String, slug: String, original: String, compact: Bool, use: @escaping (String) -> Void) {
+    init(draft: String, original: String, compact: Bool, isStale: Bool, setDraft: @escaping (String) -> Void,
+         markSeen: @escaping () -> Void, use: @escaping (String) -> Void) {
+        saved = draft
         self.original = original
         self.compact = compact
+        self.isStale = isStale
+        self.setDraft = setDraft
+        self.markSeen = markSeen
         self.use = use
-        _draft = AppStorage(wrappedValue: "", BodyDraft.key(branch: branch, slug: slug))
+        _draft = State(initialValue: draft)
     }
 
     private var originalPane: some View {
@@ -33,6 +45,17 @@ struct DraftView: View {
 
     private var draftPane: some View {
         VStack(spacing: 0) {
+            if isStale && BodyDraft.isStarted(draft) {
+                HStack {
+                    Label("The original changed since you started this draft.", systemImage: "exclamationmark.triangle")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                    Spacer()
+                    Button("Mark as Seen", action: markSeen).font(.footnote)
+                }
+                .padding(8)
+                Divider()
+            }
             TextEditor(text: $draft)
                 .font(.body.monospaced())
                 .scrollContentBackground(.hidden)
@@ -74,6 +97,13 @@ struct DraftView: View {
     }
 
     var body: some View {
+        content
+            .onChange(of: draft) { _, v in if v != saved { setDraft(v) } }
+            // Changes from elsewhere (a sync, Revert Draft).
+            .onChange(of: saved) { _, v in if v != draft { draft = v } }
+    }
+
+    @ViewBuilder private var content: some View {
         #if os(iOS)
         if compact {
             TabView(selection: Binding(get: { Page(rawValue: pageRaw) ?? .draft }, set: { pageRaw = $0.rawValue })) {

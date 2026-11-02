@@ -7,6 +7,7 @@ import Foundation
 ///     <root>/branches/<branch>/state.json      BranchState
 ///     <root>/branches/<branch>/queue.json      [QueuedCommit], oldest first
 ///     <root>/branches/<branch>/working/<slug>.md   uncommitted edits (edited or new nodes only)
+///     <root>/branches/<branch>/working-state/<slug>.json   uncommitted editor state (EditorState) that differs from the committed one
 ///
 /// Every write is atomic (temporary file, then rename), and state.json is written after the files it refers to.
 public struct LocalStore: Sendable {
@@ -96,11 +97,15 @@ public struct LocalStore: Sendable {
         try write(q, to: branchDir(branch).appendingPathComponent("queue.json"))
     }
 
-    /// Whether a branch's copy holds anything not on GitHub: queued commits, uncommitted edits or deletions,
-    /// or (for a branch created on this device) the branch itself.
+    /// Whether a branch's copy holds anything not on GitHub: queued commits, uncommitted edits, deletions or drafts,
+    /// or (for a branch created on this device) the branch itself. A changed cursor or tab alone does not count.
     public func hasLocalChanges(_ branch: String) -> Bool {
         guard let state = branchState(named: branch) else { return false }
-        return !state.existsOnRemote || !queue(branch).isEmpty || !working(branch).isEmpty || !state.deleted.isEmpty
+        if !state.existsOnRemote || !queue(branch).isEmpty || !working(branch).isEmpty || !state.deleted.isEmpty { return true }
+        // Queued drafts are covered above; compare with the base.
+        return workingStates(branch).contains { slug, text in
+            EditorState(json: text)?.draftDiffers(from: editorState(sha: state.base.states?[SitePath.statePath(slug)])) ?? false
+        }
     }
 
     public func removeBranch(_ branch: String) throws {
@@ -133,6 +138,32 @@ public struct LocalStore: Sendable {
 
     public func removeWorking(slug: String, branch: String) throws {
         let u = workingURL(branch, slug)
+        if fm.fileExists(atPath: u.path) { try fm.removeItem(at: u) }
+    }
+
+    // MARK: Working editor state
+
+    func workingStateURL(_ branch: String, _ slug: String) -> URL {
+        branchDir(branch).appendingPathComponent("working-state").appendingPathComponent("\(slug).json")
+    }
+
+    /// Uncommitted editor state files by slug.
+    public func workingStates(_ branch: String) -> [String: String] {
+        let dir = branchDir(branch).appendingPathComponent("working-state")
+        var out: [String: String] = [:]
+        for name in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] where name.hasSuffix(".json") {
+            if let text = try? String(contentsOf: dir.appendingPathComponent(name), encoding: .utf8) { out[String(name.dropLast(5))] = text }
+        }
+        return out
+    }
+
+    /// The editor state stored under a blob sha, nil if there is none or it does not parse.
+    public func editorState(sha: String?) -> EditorState? { sha.flatMap(object).flatMap(EditorState.init(json:)) }
+
+    public func saveWorkingState(_ text: String, slug: String, branch: String) throws { try writeText(text, to: workingStateURL(branch, slug)) }
+
+    public func removeWorkingState(slug: String, branch: String) throws {
+        let u = workingStateURL(branch, slug)
         if fm.fileExists(atPath: u.path) { try fm.removeItem(at: u) }
     }
 

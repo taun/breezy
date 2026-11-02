@@ -158,7 +158,7 @@ struct RootView: View {
             // it in an overflow menu), and iOS 26 draws bottom-toolbar buttons as an unlabeled glass icon.
             .safeAreaInset(edge: .bottom) {
                 if ws.hasChanges {
-                    let n = ws.changes.count
+                    let n = ws.changedNodes.count
                     Button { sheetRaw = Sheet.commit.rawValue } label: {
                         Label("Commit \(n) Change\(n == 1 ? "" : "s")", systemImage: "checkmark.circle")
                             .labelStyle(.titleAndIcon).bold()
@@ -177,7 +177,7 @@ struct RootView: View {
 
     private func moreMenu(_ ws: SiteWorkspace) -> some View {
         Menu {
-            Button { sheetRaw = Sheet.commit.rawValue } label: { Label("Commit (\(ws.changes.count))", systemImage: "checkmark.circle") }
+            Button { sheetRaw = Sheet.commit.rawValue } label: { Label("Commit (\(ws.changedNodes.count))", systemImage: "checkmark.circle") }
                 .disabled(!ws.hasChanges)
             if !model.isOnDefaultBranch {
                 Button { sheetRaw = Sheet.publish.rawValue } label: { Label("Publish \(ws.branch)…", systemImage: "paperplane") }
@@ -204,7 +204,7 @@ struct RootView: View {
             }
             .help("Switch branch, or manage branches and pull requests")
             Button { sheetRaw = Sheet.commit.rawValue } label: {
-                Label("Commit (\(ws.changes.count))", systemImage: "checkmark.circle")
+                Label("Commit (\(ws.changedNodes.count))", systemImage: "checkmark.circle")
             }
             .disabled(!ws.hasChanges)
             .help("Commit all changes to \(ws.branch)")
