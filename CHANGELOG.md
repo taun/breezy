@@ -26,6 +26,7 @@ All notable changes to Breezy are documented here. The format follows [Keep a Ch
 
 ### Fixed
 
+- **Tags typed and then lost:** text typed in the Tags field (and other fields that save on Return or when focus leaves) was dropped if you left the node or switched tab without pressing Return. It is now saved when the field goes away.
 - **Nodes changed elsewhere open on their new content** (#15): when a sync brings a new version of a node, it opens on its body with the cursor at the end (the Title tab if the body is empty), or where the other device left it when its editor state came along, instead of the view and cursor of the old version. An open node follows the sync live. On iPhone and iPad the body scrolls to that cursor even before the keyboard is up.
 
 - **Crash opening Settings on the Mac** (#10): after reverting an edit, opening Settings could quit the app with a SwiftUI environment assertion. Every sheet now receives the app's model explicitly. The cause could not be reproduced without the second half of the crash report, so please confirm.

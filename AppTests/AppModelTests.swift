@@ -170,7 +170,7 @@ struct Harness {
 }
 
 /// Images on a line of their own are shown as pictures in the preview; one inside a sentence stays inline text.
-@Suite struct PreviewImageTests {
+@MainActor @Suite struct PreviewImageTests {
     @Test func standaloneImageLineBecomesAnImageBlock() {
         let blocks = MarkdownPreview.blocks("Intro\n\n![lego](/assets/images/big-lego-512.png){.align-right}\nNext ![x](/a.png) inline")
         #expect(blocks == [
