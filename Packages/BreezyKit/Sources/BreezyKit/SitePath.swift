@@ -20,6 +20,10 @@ public enum SitePath {
     }
 
     public static func nodePath(_ slug: String) -> String { "\(nodesDir)\(slug).md" }
+
+    /// An asset's repo path from its site path, and back: "/assets/images/x.jpg" <-> "src/assets/images/x.jpg".
+    public static func repoPath(site: String) -> String { "src" + site }
+    public static func sitePath(repo: String) -> String { String(repo.dropFirst("src".count)) }
     public static func statePath(_ slug: String) -> String { "\(statesDir)\(slug).json" }
 
     static func isNodeEntry(_ e: TreeEntry) -> Bool { e.isBlob && kind(e.path).map { if case .node = $0 { true } else { false } } == true }

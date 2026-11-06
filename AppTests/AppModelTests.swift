@@ -299,3 +299,68 @@ struct Harness {
         #expect(CommitView.caption(ws.changedNodes[0]) == "draft started")
     }
 }
+
+/// Fetches from a table, like the web would.
+struct FakeImageFetcher: ImageFetching {
+    var images: [URL: Data] = [:]
+    var failure: ImageFetchError?
+    func fetch(_ url: URL) async throws -> Data {
+        if let failure { throw failure }
+        guard let data = images[url] else { throw ImageFetchError.http(404) }
+        return data
+    }
+}
+
+@MainActor @Suite struct HeaderImageAppTests {
+    /// A tiny valid PNG (1×1, opaque red, with an alpha channel): opaque, so it is saved as a JPEG.
+    static let png = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==")!
+
+    private func model(fetcher: FakeImageFetcher) -> (AppModel, Harness) {
+        let h = Harness()
+        let model = AppModel(tokens: MemoryTokenStore("t"), defaults: h.defaults, transport: h.github, imageFetcher: fetcher, storeFor: { _ in h.store })
+        return (model, h)
+    }
+
+    @Test func aPictureFromAWebAddressIsCopiedAndTheAddressIsNotKept() async throws {
+        let url = URL(string: "https://example.com/cover.png")!
+        let (model, _) = model(fetcher: FakeImageFetcher(images: [url: Self.png]))
+        await model.saveSettings(repo: "o/r", token: "")
+        let ws = try #require(model.workspace)
+        #expect(await model.importHeaderImage(slug: "a", from: "example.com/cover.png", makeThumbnail: true))
+        let node = try #require(ws.nodes["a"])
+        #expect(node.header.image == "/assets/images/a-header.jpg" && node.header.teaser == "/assets/images/a-teaser.jpg")
+        #expect(!node.rendered().contains("example.com"))
+        #expect(ws.imageData("/assets/images/a-header.jpg") != nil)
+        #expect(model.errorMessage == nil)
+    }
+
+    @Test func aFailedDownloadLeavesTheNodeAlone() async throws {
+        let (model, _) = model(fetcher: FakeImageFetcher(failure: .http(404)))
+        await model.saveSettings(repo: "o/r", token: "")
+        let ws = try #require(model.workspace)
+        let before = ws.nodes["a"]?.rendered()
+        #expect(await model.importHeaderImage(slug: "a", from: "https://example.com/missing.png", makeThumbnail: true) == false)
+        #expect(ws.nodes["a"]?.rendered() == before && ws.state.pendingAssets == nil)
+        #expect(model.errorMessage?.contains("404") == true)
+    }
+
+    @Test func somethingThatIsNotAnImageIsRefused() async throws {
+        let url = URL(string: "https://example.com/page.html")!
+        let (model, _) = model(fetcher: FakeImageFetcher(images: [url: Data("<html>".utf8)]))
+        await model.saveSettings(repo: "o/r", token: "")
+        let ws = try #require(model.workspace)
+        let before = ws.nodes["a"]?.rendered()
+        #expect(await model.importHeaderImage(slug: "a", from: url.absoluteString, makeThumbnail: true) == false)
+        #expect(ws.nodes["a"]?.rendered() == before && model.errorMessage != nil)
+    }
+
+    @Test func pastedBytesWorkOffline() async throws {
+        let (model, h) = model(fetcher: FakeImageFetcher())
+        await model.saveSettings(repo: "o/r", token: "")
+        h.github.isOffline = true
+        let ws = try #require(model.workspace)
+        #expect(model.setHeaderImage(slug: "a", from: Self.png, makeThumbnail: false))
+        #expect(ws.nodes["a"]?.header.image == "/assets/images/a-header.jpg" && ws.nodes["a"]?.header.teaser == nil)
+        #expect(ws.state.pendingAssets?.keys.sorted() == ["/assets/images/a-header.jpg"])
+    }
+}

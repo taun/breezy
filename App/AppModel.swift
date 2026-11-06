@@ -20,6 +20,7 @@ final class AppModel {
     // Injected so tests can run AppModel against a fake GitHub, a temporary folder and their own settings.
     private let defaults: UserDefaults
     private let transport: HTTPTransport
+    private let imageFetcher: ImageFetching
     private let storeFor: (RepoRef) -> LocalStore
 
     private(set) var store: LocalStore?
@@ -77,7 +78,8 @@ final class AppModel {
     private var started = false
 
     init(tokens: TokenStore = KeychainTokenStore(), defaults: UserDefaults = .standard,
-         transport: HTTPTransport = URLSessionTransport(), storeFor: @escaping (RepoRef) -> LocalStore = LocalStore.standard(for:)) {
+         transport: HTTPTransport = URLSessionTransport(), imageFetcher: ImageFetching = URLSessionImageFetcher(),
+         storeFor: @escaping (RepoRef) -> LocalStore = LocalStore.standard(for:)) {
         var tokens = tokens
         var transport = transport
         self.defaults = defaults
@@ -95,6 +97,7 @@ final class AppModel {
         if env["BREEZY_TEST_OFFLINE"] == "1" { transport = OfflineTransport() }
         #endif
         self.transport = transport
+        self.imageFetcher = imageFetcher
         self.tokens = tokens
         hasToken = tokens.load() != nil
         updateTokenSync()
@@ -102,6 +105,39 @@ final class AppModel {
 
     var repo: RepoRef? { RepoRef(repoString) }
     var client: GitHubClient? { repo.flatMap { r in tokens.load().map { GitHubClient(repo: r, token: $0, transport: transport) } } }
+
+    /// Makes a node's banner and thumbnail from picture bytes (pasted or downloaded). Works offline: the images are
+    /// kept on the device and go up with the node's next commit. Returns false, with `errorMessage` set, if the bytes
+    /// are not an image.
+    @discardableResult
+    func setHeaderImage(slug: String, from data: Data, makeThumbnail: Bool, in ws: SiteWorkspace? = nil) -> Bool {
+        guard let ws = ws ?? workspace else { return false }
+        do {
+            try ws.setHeaderImage(slug: slug, from: data, makeThumbnail: makeThumbnail)
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    /// Copies the picture at a web address into the node's header images. Only the downloaded picture is kept, never
+    /// the address. Needs a connection; the node is left alone if anything fails.
+    @discardableResult
+    func importHeaderImage(slug: String, from address: String, makeThumbnail: Bool) async -> Bool {
+        guard let ws = workspace else { return false }
+        guard isOnline else {
+            errorMessage = ImageFetchError.offline.localizedDescription
+            return false
+        }
+        do {
+            let data = try await imageFetcher.fetch(try ImageSource.url(from: address))
+            return setHeaderImage(slug: slug, from: data, makeThumbnail: makeThumbnail, in: ws)
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
 
     /// Files an issue in Breezy's own repository with the saved token. Returns the new issue, or nil with `errorMessage` set.
     /// The token must also cover taun/breezy with Issues read and write; GitHub answers 403/404 otherwise.

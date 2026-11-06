@@ -90,7 +90,7 @@ public struct GitHubClient: Sendable {
         guard let baseTree = (parent["tree"] as? [String: Any])?["sha"] as? String else { throw GitHubError.invalidResponse }
         let entries: [[String: Any]] = changes.map { c in
             var e: [String: Any] = ["path": c.path, "mode": "100644", "type": "blob"]
-            if let content = c.content { e["content"] = content } else { e["sha"] = NSNull() } // null sha deletes
+            if let blob = c.blobSHA { e["sha"] = blob } else if let content = c.content { e["content"] = content } else { e["sha"] = NSNull() } // null sha deletes
             return e
         }
         let tree = try await object("POST", "/git/trees", body: ["base_tree": baseTree, "tree": entries])
@@ -99,6 +99,13 @@ public struct GitHubClient: Sendable {
         guard let commitSHA = commit["sha"] as? String else { throw GitHubError.invalidResponse }
         _ = try await object("PATCH", "/git/refs/heads/\(Self.escapeRef(branch))", body: ["sha": commitSHA, "force": false])
         return commitSHA
+    }
+
+    /// Uploads a binary file as a blob and returns its sha (the same one `GitBlob.sha(of:)` computes).
+    public func createBlob(_ data: Data) async throws -> String {
+        let json = try await object("POST", "/git/blobs", body: ["content": data.base64EncodedString(), "encoding": "base64"])
+        guard let sha = json["sha"] as? String else { throw GitHubError.invalidResponse }
+        return sha
     }
 
     // MARK: Pull requests

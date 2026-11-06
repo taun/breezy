@@ -136,6 +136,7 @@ struct NodeEditorView: View {
     }
 
     @ViewBuilder private func media(_ node: NodeFile) -> some View {
+        HeaderImageSection(workspace: workspace, slug: slug, header: node.header)
         Section("Media") {
             ForEach(NodeFile.stringKeys, id: \.self) { key in
                 HStack {

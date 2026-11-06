@@ -81,7 +81,7 @@ struct MarkdownPreview: View {
 
 /// One image of the preview: from the device if it is there, otherwise fetched once from GitHub and kept. Offline
 /// and not yet fetched, or not an asset of this branch, it shows a labeled placeholder instead.
-private struct PreviewImage: View {
+struct PreviewImage: View {
     @Environment(AppModel.self) private var model
     let image: MarkdownImage
     let workspace: SiteWorkspace?

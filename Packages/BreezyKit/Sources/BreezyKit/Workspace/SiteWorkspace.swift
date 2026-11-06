@@ -22,6 +22,8 @@ public final class SiteWorkspace {
     private var committedText: [String: String] = [:]
     /// Editor state files in base + queue, by slug, parsed (one that does not parse counts as empty).
     private var committedStates: [String: EditorState] = [:]
+    /// Images added by queued commits, not pushed yet: site path ("/assets/…") -> blob sha.
+    private var queuedAssets: [String: String] = [:]
     /// Each node's editor state: uncommitted if changed here, else committed. Read with `editorState(_:)`.
     public private(set) var editorStates: [String: EditorState] = [:]
     /// Slugs whose editor state changed in memory and is not on disk yet (cursor moves are written in batches).
@@ -40,7 +42,11 @@ public final class SiteWorkspace {
     public var branch: String { state.branch }
     /// The commit the local copy is based on.
     public var headSHA: String { state.base.commit }
-    public var assetPaths: [String] { state.base.assets }
+    /// The branch's assets: pushed, queued and not yet committed.
+    public var assetPaths: [String] {
+        if queuedAssets.isEmpty, state.pendingAssets == nil { return state.base.assets }
+        return Set(state.base.assets).union(queuedAssets.keys).union(state.pendingAssets?.keys ?? [:].keys).sorted()
+    }
     public var conflicts: [Conflict] { state.conflicts }
 
     init(store: LocalStore, state: BranchState) throws {
@@ -197,7 +203,22 @@ public final class SiteWorkspace {
                 out.append(FileChange(path: path, content: editorState(slug).rendered()))
             }
         }
-        return out
+        return out + usedPendingAssets.sorted { $0.key < $1.key }.map { site, sha in
+            FileChange(path: SitePath.repoPath(site: site), content: nil, blobSHA: sha)
+        }
+    }
+
+    /// The new images a commit takes: pending ones some node has as its header. A node using one counts as changed
+    /// even when its text is not (a new picture at the path it already had). The others are dropped as soon as an
+    /// edit stops using them (`persist`).
+    private var usedPendingAssets: [String: String] {
+        guard let pending = state.pendingAssets, !pending.isEmpty else { return [:] }
+        return pending.filter { site, _ in nodes.values.contains { $0.header.uses(site) } }
+    }
+
+    private func usesPendingAsset(_ slug: String) -> Bool {
+        guard let pending = state.pendingAssets, let header = nodes[slug]?.header else { return false }
+        return pending.keys.contains(where: header.uses)
     }
 
     /// One row per node with something to commit: its file and/or its draft.
@@ -216,6 +237,7 @@ public final class SiteWorkspace {
             let slug = Self.slug(c.path)
             rows[slug] = NodeChange(slug: slug, file: c.content == nil ? .deleted : committedText[slug] == nil ? .added : .edited)
         }
+        for slug in nodes.keys where rows[slug] == nil && usesPendingAsset(slug) { rows[slug] = NodeChange(slug: slug, file: .edited) }
         for c in draftChanges {
             guard case let .state(slug)? = SitePath.kind(c.path) else { continue }
             let before = committedState(slug)?.draft, after = editorState(slug).draft
@@ -226,6 +248,7 @@ public final class SiteWorkspace {
 
     public var hasChanges: Bool {
         !changes.isEmpty || editorStates.contains { nodes[$0.key] != nil && $0.value.draftDiffers(from: committedStates[$0.key]) }
+            || !usedPendingAssets.isEmpty
     }
 
     /// Anything here that is not on GitHub: uncommitted edits or drafts, or queued commits.
@@ -253,7 +276,7 @@ public final class SiteWorkspace {
 
     /// The branch was found deleted on GitHub while this copy had local changes; see `recreateOnGitHub` and `moveEdits`.
     public var isDeletedOnGitHub: Bool { state.deletedOnGitHubAt != nil }
-    public func isModified(_ slug: String) -> Bool { committedText[slug] != nodes[slug]?.rendered() }
+    public func isModified(_ slug: String) -> Bool { committedText[slug] != nodes[slug]?.rendered() || usesPendingAsset(slug) }
 
     /// Text of a node in the base snapshot / GitHub's pending snapshot, for showing conflicts.
     public func text(sha: String?) -> String? { sha.flatMap(store.object) }
@@ -412,6 +435,10 @@ public final class SiteWorkspace {
     }
 
     public func revert(_ slug: String) throws {
+        // New pictures only this node uses go too (a replaced picture keeps its path, so the text alone would keep it).
+        if state.pendingAssets != nil, let header = nodes[slug]?.header {
+            try dropPendingAssets { site in header.uses(site) && !nodes.contains { $0.key != slug && $0.value.header.uses(site) } }
+        }
         if let text = committedText[slug] {
             nodes[slug] = try NodeFile(slug: slug, text: text)
         } else {
@@ -445,6 +472,9 @@ public final class SiteWorkspace {
             try store.saveBranchState(state)
         }
         try refreshDeleted()
+        // A new picture this edit stopped using (another file chosen, the header removed, the node deleted, a .png
+        // banner in place of a .jpg) is no longer a change; left pending, the branch would count as changed for good.
+        if state.pendingAssets != nil { try dropUnusedPendingAssets() }
     }
 
     // MARK: Committing (works offline)
@@ -468,6 +498,7 @@ public final class SiteWorkspace {
             }
         }
         state.deleted = []
+        state.pendingAssets = nil // the ones used went into the commit; the rest were left over
         try store.saveBranchState(state)
         try rebuild()
     }
@@ -528,9 +559,18 @@ public final class SiteWorkspace {
         }
         var pushed = 0
         while let next = queue.first {
+            for c in next.changes {
+                if let sha = c.blobSHA {
+                    guard let data = store.objectData(sha), GitBlob.sha(of: data) == sha else { throw WorkspaceError.missingObject(c.path) }
+                    // A different sha would leave the tree pointing at a blob GitHub does not have.
+                    guard try await client.createBlob(data) == sha else { throw GitHubError.invalidResponse }
+                }
+            }
             let newHead = try await client.commit(next.changes, message: next.message, to: branch, expectedHead: state.base.commit)
             var base = state.base
-            for c in next.changes { base.apply(c.path, sha: try c.content.map { try store.storeObject($0) }) }
+            for c in next.changes {
+                if let sha = c.blobSHA { base.applyAsset(c.path, sha: sha) } else { base.apply(c.path, sha: try c.content.map { try store.storeObject($0) }) }
+            }
             base.commit = newHead
             for c in next.changes where Self.isNodePath(c.path) { state.fileDates = (state.fileDates ?? [:]).merging([c.path: .now]) { $1 } }
             state.base = base
@@ -591,7 +631,59 @@ public final class SiteWorkspace {
     /// The blob sha of an image the preview shows, by its site path ("/assets/…"), or nil if this branch has no such
     /// asset (or the copy predates asset shas and has not synced since).
     public func assetSHA(_ path: String) -> String? {
-        state.base.assetSHAs?[MarkdownImage.sitePath(path)]
+        let site = MarkdownImage.sitePath(path)
+        return state.pendingAssets?[site] ?? queuedAssets[site] ?? state.base.assetSHAs?[site]
+    }
+
+    /// Makes a node's banner (and, with `makeThumbnail`, its bookshelf thumbnail) from a picture: both are fitted to
+    /// the site's boxes, kept as new assets named after the node, and written into its `header`. Without a thumbnail
+    /// the node's existing one stays. Nothing changes if the bytes are not an image. Works offline.
+    public func setHeaderImage(slug: String, from data: Data, makeThumbnail: Bool = true) throws {
+        guard var node = nodes[slug] else { return }
+        let banner = try ImageResizer.resize(data, fitting: ImageResizer.headerBox)
+        let small = makeThumbnail ? try ImageResizer.resize(data, fitting: ImageResizer.teaserBox) : nil
+        let image = HeaderImages.sitePath(slug: slug, teaser: false, fileExtension: banner.fileExtension)
+        let teaser = small.map { HeaderImages.sitePath(slug: slug, teaser: true, fileExtension: $0.fileExtension) } ?? node.header.teaser
+        // The header first: one Breezy cannot rewrite throws before any picture is kept.
+        try node.setHeader(image: image, teaser: teaser)
+        try addAsset(banner.data, at: image)
+        if let small, let teaser { try addAsset(small.data, at: teaser) }
+        try update(slug) { $0 = node }
+    }
+
+    /// Takes the banner and thumbnail off a node. The files stay in the site (another node may use them).
+    public func removeHeaderImage(slug: String) throws {
+        try update(slug) { try $0.setHeader(image: nil, teaser: nil) }
+    }
+
+    /// Adds an image to the branch at a site path ("/assets/images/name.jpg"): kept on the device, and committed
+    /// with the next commit if a node has it as its header (`setHeaderImage`). Replaces any image at that path. Works offline.
+    public func addAsset(_ data: Data, at path: String) throws {
+        let site = MarkdownImage.sitePath(path)
+        guard site.hasPrefix("/assets/"), !site.contains("..") else { throw WorkspaceError.invalidAssetPath(path) }
+        let sha = GitBlob.sha(of: data)
+        try store.storeObjectData(data, sha: sha)
+        var pending = state.pendingAssets ?? [:]
+        // The same picture the branch already has there is no change.
+        pending[site] = sha == (queuedAssets[site] ?? state.base.assetSHAs?[site]) ? nil : sha
+        state.pendingAssets = pending.isEmpty ? nil : pending
+        try store.saveBranchState(state)
+        storedImages += 1
+    }
+
+    /// Forgets new images no node uses any more.
+    private func dropUnusedPendingAssets() throws {
+        let used = usedPendingAssets
+        try dropPendingAssets { used[$0] == nil }
+    }
+
+    private func dropPendingAssets(where drop: (String) -> Bool) throws {
+        guard let pending = state.pendingAssets else { return }
+        let kept = pending.filter { !drop($0.key) }
+        guard kept.count != pending.count else { return }
+        state.pendingAssets = kept.isEmpty ? nil : kept
+        try store.saveBranchState(state)
+        storedImages += 1 // a preview showing a dropped picture goes back to the branch's
     }
 
     /// Whether the path names an asset on this branch (as far as this copy knows).
@@ -776,7 +868,17 @@ public final class SiteWorkspace {
 
     /// Removes a path from every queued commit, dropping commits left empty.
     private func dropQueued(_ path: String) throws {
+        // The new pictures the dropped version of a node used go too, unless another queued node uses them.
+        let dropped = queue.flatMap(\.changes).filter { $0.path == path }.compactMap(\.content)
         for i in queue.indices { queue[i].changes.removeAll { $0.path == path } }
+        let kept = queue.flatMap(\.changes).filter { $0.blobSHA == nil }.compactMap(\.content)
+        for i in queue.indices {
+            queue[i].changes.removeAll { c in
+                guard c.blobSHA != nil else { return false }
+                let site = SitePath.sitePath(repo: c.path)
+                return dropped.contains { $0.contains(site) } && !kept.contains { $0.contains(site) }
+            }
+        }
         queue.removeAll { $0.changes.isEmpty }
         try store.saveQueue(queue, for: branch)
     }
@@ -814,6 +916,9 @@ public final class SiteWorkspace {
             }
         }
         for (slug, text) in edits { try store.saveWorking(text, slug: slug, branch: name) }
+        // Images added here (queued or not) go along unless the new base has the same file.
+        let carried = (state.pendingAssets ?? [:]).merging(queuedAssets) { mine, _ in mine }.filter { target.assetSHAs?[$0.key] != $0.value }
+        newState.pendingAssets = carried.isEmpty ? nil : carried
         // Drafts not on GitHub go along too (the tab and cursor of other nodes do not).
         for (slug, mine) in editorStates where nodes[slug] != nil {
             let path = SitePath.statePath(slug)
@@ -847,6 +952,7 @@ public final class SiteWorkspace {
         var newState = BranchState(branch: name, base: state.base, existsOnRemote: false, fetchedAt: state.fetchedAt)
         newState.fileDates = state.fileDates
         newState.deleted = state.deleted
+        newState.pendingAssets = state.pendingAssets
         try store.saveBranchState(newState)
         for (slug, text) in store.working(branch) {
             try store.saveWorking(text, slug: slug, branch: name)
@@ -857,6 +963,7 @@ public final class SiteWorkspace {
             try store.removeWorkingState(slug: slug, branch: branch)
         }
         state.deleted = []
+        state.pendingAssets = nil
         try store.saveBranchState(state)
         try rebuild()
         return try SiteWorkspace(store: store, state: newState)
@@ -874,8 +981,10 @@ public final class SiteWorkspace {
         for (path, sha) in state.base.states ?? [:] {
             if case let .state(slug)? = SitePath.kind(path), let text = store.object(sha) { states[slug] = text }
         }
+        var assets: [String: String] = [:]
         for qc in queue {
             for c in qc.changes {
+                if let sha = c.blobSHA { assets[SitePath.sitePath(repo: c.path)] = sha; continue }
                 switch SitePath.kind(c.path) {
                 case let .node(slug)?: committed[slug] = c.content
                 case let .state(slug)?: states[slug] = c.content
@@ -883,6 +992,7 @@ public final class SiteWorkspace {
                 }
             }
         }
+        queuedAssets = assets
         var display: [String: NodeFile] = [:]
         for (slug, text) in committed { display[slug] = try NodeFile(slug: slug, text: text) }
         for (slug, text) in store.working(branch) { display[slug] = try NodeFile(slug: slug, text: text) }
@@ -922,6 +1032,7 @@ public final class SiteWorkspace {
         deletedNodes = gone
     }
 
+
     static func slug(_ path: String) -> String { String(path.dropFirst(nodesDir.count).dropLast(3)) }
     static func path(_ slug: String) -> String { "\(nodesDir)\(slug).md" }
 }
@@ -931,12 +1042,14 @@ public enum WorkspaceError: Error, Equatable, LocalizedError {
     case queuedCommits
     case branchExists(String)
     case missingObject(String)
+    case invalidAssetPath(String)
 
     public var errorDescription: String? {
         switch self {
         case let .invalidSlug(m): m
         case .queuedCommits: "This branch has commits waiting to be pushed. Sync first, then create the branch."
         case let .branchExists(name): "A branch named “\(name)” already exists on this device."
+        case let .invalidAssetPath(path): "“\(path)” is not a place for images. Images go under /assets/."
         case let .missingObject(path): "The local copy is missing the contents of \(path). Delete the branch's local copy and download it again."
         }
     }

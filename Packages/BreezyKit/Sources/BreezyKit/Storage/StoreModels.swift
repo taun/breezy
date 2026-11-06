@@ -36,6 +36,14 @@ public struct Snapshot: Codable, Equatable, Sendable {
         self.states = states
     }
 
+    /// Records a pushed asset ("src/assets/…" path) so it shows as one of the branch's assets.
+    mutating func applyAsset(_ path: String, sha: String) {
+        let site = SitePath.sitePath(repo: path)
+        if !assets.contains(site) { assets = (assets + [site]).sorted() }
+        // A copy from before asset shas has none until the sync fills them all in; one entry would stop that.
+        assetSHAs?[site] = sha
+    }
+
     /// Records a pushed file (nil sha: deleted) in the map its path belongs to; other paths are not tracked.
     mutating func apply(_ path: String, sha: String?) {
         switch SitePath.kind(path) {
@@ -95,6 +103,9 @@ public struct BranchState: Codable, Equatable, Sendable {
     /// Node paths deleted by commits made here, kept until the deletion reaches the published branch (or the node is
     /// restored) so the list can still show them and offer Undelete. Optional for older state files.
     public var pendingDeletions: [String]?
+    /// Images added here and not committed yet: site path ("/assets/…") -> blob sha, bytes in `objects/`. They go
+    /// into the next commit that has a node using them. Optional for older state files.
+    public var pendingAssets: [String: String]?
 
     public init(branch: String, base: Snapshot, existsOnRemote: Bool, fetchedAt: Date? = nil) {
         self.branch = branch

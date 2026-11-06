@@ -66,14 +66,18 @@ public struct TreeEntry: Hashable, Sendable {
     public var isBlob: Bool
 }
 
-/// A file write (`content`) or deletion (`content == nil`) in one commit.
+/// A file write (`content`, or for a binary file `blobSHA`) or deletion (neither) in one commit.
 public struct FileChange: Codable, Hashable, Sendable {
     public var path: String
     public var content: String?
+    /// A binary file (an image) whose bytes are in the local store's `objects/` under this sha. Uploaded as a blob
+    /// before the commit; older queue files have none.
+    public var blobSHA: String?
 
-    public init(path: String, content: String?) {
+    public init(path: String, content: String?, blobSHA: String? = nil) {
         self.path = path
         self.content = content
+        self.blobSHA = blobSHA
     }
 }
 

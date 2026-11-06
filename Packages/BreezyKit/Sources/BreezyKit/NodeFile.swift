@@ -1,9 +1,16 @@
 import Foundation
 import Yams
 
-public enum NodeFileError: Error, Equatable {
+public enum NodeFileError: Error, Equatable, LocalizedError {
     case noFrontMatter
     case invalidYAML(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .noFrontMatter: "The file has no front matter."
+        case let .invalidYAML(message): message
+        }
+    }
 }
 
 /// One `src/nodes/<slug>.md` file: raw text kept for lossless writes, plus the decoded fields.
@@ -22,6 +29,8 @@ public struct NodeFile: Sendable {
     public private(set) var linkWarnings: [String]
     /// Optional single-string keys (media and similar), see `NodeFile.stringKeys`.
     public private(set) var strings: [String: String]
+    /// The page banner and bookshelf thumbnail (`header:`), site paths of files in `src/assets/`.
+    public private(set) var header: NodeHeader
 
     /// Plain string front matter keys the editor exposes besides the dedicated setters.
     public static let stringKeys = ["video", "archive", "slides", "repo"]
@@ -32,7 +41,7 @@ public struct NodeFile: Sendable {
         self.slug = slug
         frontMatter = FrontMatterText(lines: Array(all[1..<close]))
         body = all[(close + 1)...].joined(separator: "\n")
-        title = ""; type = "thing"; summary = ""; tags = []; date = nil; draft = false; links = []; linkWarnings = []; strings = [:]
+        title = ""; type = "thing"; summary = ""; tags = []; date = nil; draft = false; links = []; linkWarnings = []; strings = [:]; header = NodeHeader()
         try decode()
     }
 
@@ -60,6 +69,8 @@ public struct NodeFile: Sendable {
         (links, linkWarnings) = Relations.parse(dict["links"], from: slug)
         strings = [:]
         for k in Self.stringKeys { if let v = dict[k] as? String { strings[k] = v } }
+        let h = dict["header"] as? [String: Any]
+        header = NodeHeader(image: h?["image"] as? String, teaser: h?["teaser"] as? String, imageDescription: h?["image_description"] as? String)
     }
 
     /// A new node in the site's usual layout.
@@ -92,6 +103,15 @@ public struct NodeFile: Sendable {
         try decode()
     }
 
+    /// Sets or (nil) removes the banner image and the thumbnail; `image_description` and any other `header` keys stay.
+    public mutating func setHeader(image: String?, teaser: String?) throws {
+        var edited = frontMatter // both or neither, if the header cannot be changed
+        try edited.setChild("header", "image", to: image.flatMap { $0.isEmpty ? nil : $0 })
+        try edited.setChild("header", "teaser", to: teaser.flatMap { $0.isEmpty ? nil : $0 })
+        frontMatter = edited
+        try decode()
+    }
+
     public mutating func setBody(_ v: String) { body = v }
 
     public mutating func setLinks(_ v: [NodeLink]) throws { frontMatter.set("links", to: [YAMLFormat.linksLine(v)]); try decode() }
@@ -111,4 +131,20 @@ public struct NodeFile: Sendable {
         if v.precision == .year { frontMatter.set("datePrecision", to: ["datePrecision: year"]) } else { frontMatter.remove("datePrecision") }
         try decode()
     }
+}
+
+/// The `header:` mapping of a node: its page banner, bookshelf thumbnail and (unused by the site so far) description.
+public struct NodeHeader: Equatable, Sendable {
+    public var image: String?
+    public var teaser: String?
+    public var imageDescription: String?
+
+    public init(image: String? = nil, teaser: String? = nil, imageDescription: String? = nil) {
+        self.image = image
+        self.teaser = teaser
+        self.imageDescription = imageDescription
+    }
+
+    /// Whether the banner or the thumbnail is the asset at `site` ("/assets/…").
+    public func uses(_ site: String) -> Bool { [image, teaser].contains { $0.map(MarkdownImage.sitePath) == site } }
 }

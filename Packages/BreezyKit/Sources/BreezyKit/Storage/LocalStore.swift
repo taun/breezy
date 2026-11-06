@@ -101,7 +101,7 @@ public struct LocalStore: Sendable {
     /// or (for a branch created on this device) the branch itself. A changed cursor or tab alone does not count.
     public func hasLocalChanges(_ branch: String) -> Bool {
         guard let state = branchState(named: branch) else { return false }
-        if !state.existsOnRemote || !queue(branch).isEmpty || !working(branch).isEmpty || !state.deleted.isEmpty { return true }
+        if !state.existsOnRemote || !queue(branch).isEmpty || !working(branch).isEmpty || !state.deleted.isEmpty || !(state.pendingAssets ?? [:]).isEmpty { return true }
         // Queued drafts are covered above; compare with the base.
         return workingStates(branch).contains { slug, text in
             EditorState(json: text)?.draftDiffers(from: editorState(sha: state.base.states?[SitePath.statePath(slug)])) ?? false
