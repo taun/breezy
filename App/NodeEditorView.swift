@@ -104,6 +104,7 @@ struct NodeEditorView: View {
         .labelsHidden()
         .pickerStyle(.segmented)
         .controlSize(segmentSize)
+        .frame(maxWidth: .infinity) // centered: on the Mac a segmented control is only as wide as its segments
     }
 
     @ViewBuilder private var issuesBanner: some View {
@@ -269,13 +270,20 @@ struct NodeEditorView: View {
             if tab == .body {
                 bodyTab(node)
             } else {
-            // A grouped form for the other tabs: the tab picker is its first row and scrolls with the fields.
+            #if os(macOS)
+            // A grouped form on the Mac draws every row in a card, even with a clear row background: the tab picker
+            // sits above the form instead, where the Body tab has it, so it stays put when switching tabs.
+            tabHeader.padding(.vertical, 8).padding(.horizontal, GroupedStyle.margin)
+            #endif
+            // A grouped form for the other tabs: on iOS the tab picker is its first row and scrolls with the fields.
             Form {
+                #if os(iOS)
                 Section {
                     tabHeader
                     .listRowBackground(Color.clear)
                     .listRowInsets(EdgeInsets())
                 }
+                #endif
                 switch tab {
                 case .title: titleSection(node)
                 case .date: DateSection(date: node.date) { new in edit { try $0.setDate(new) } }
@@ -285,11 +293,14 @@ struct NodeEditorView: View {
                 }
             }
             .formStyle(.grouped)
+            // The Body tab's page color, so switching tabs does not change it (the Mac's form draws its own).
+            .scrollContentBackground(.hidden)
             // Each tab opens at the top rather than at the last tab's scroll position.
             .id(tab)
             .scrollDismissesKeyboard(.interactively)
             }
             }
+            .background(GroupedStyle.page)
             .onChange(of: focus) { _, f in
                 // Leaving the app also clears focus; only record changes made while in use.
                 if scenePhase == .active { focusRaw = f.map { "\(slug)|\($0.rawValue)" } ?? "" }
