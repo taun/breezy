@@ -354,6 +354,15 @@ struct FakeImageFetcher: ImageFetching {
         #expect(ws.nodes["a"]?.rendered() == before && model.errorMessage != nil)
     }
 
+    /// The unsent address belongs to the node it was typed for; clearing it after an import leaves another node's alone.
+    @Test func anUnsentAddressBelongsToItsNode() {
+        let stored = HeaderImageSection.stored("example.com/a.png", for: "a")
+        #expect(HeaderImageSection.address(stored, for: "a") == "example.com/a.png")
+        #expect(HeaderImageSection.address(stored, for: "ab") == "" && HeaderImageSection.address(stored, for: "b") == "")
+        #expect(HeaderImageSection.stored("", for: "a") == "")
+        #expect(stored != HeaderImageSection.stored("example.com/a.png", for: "b"))
+    }
+
     @Test func pastedBytesWorkOffline() async throws {
         let (model, h) = model(fetcher: FakeImageFetcher())
         await model.saveSettings(repo: "o/r", token: "")

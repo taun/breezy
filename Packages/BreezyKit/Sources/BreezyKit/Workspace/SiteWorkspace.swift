@@ -44,8 +44,8 @@ public final class SiteWorkspace {
     public var headSHA: String { state.base.commit }
     /// The branch's assets: pushed, queued and not yet committed.
     public var assetPaths: [String] {
-        if queuedAssets.isEmpty, state.pendingAssets == nil { return state.base.assets }
-        return Set(state.base.assets).union(queuedAssets.keys).union(state.pendingAssets?.keys ?? [:].keys).sorted()
+        let added = Set(queuedAssets.keys).union(state.pendingAssets?.keys ?? [:].keys).subtracting(state.base.assets)
+        return added.isEmpty ? state.base.assets : (state.base.assets + added).sorted()
     }
     public var conflicts: [Conflict] { state.conflicts }
 
@@ -435,10 +435,7 @@ public final class SiteWorkspace {
     }
 
     public func revert(_ slug: String) throws {
-        // New pictures only this node uses go too (a replaced picture keeps its path, so the text alone would keep it).
-        if state.pendingAssets != nil, let header = nodes[slug]?.header {
-            try dropPendingAssets { site in header.uses(site) && !nodes.contains { $0.key != slug && $0.value.header.uses(site) } }
-        }
+        try dropNewPictures(of: slug, queued: false)
         if let text = committedText[slug] {
             nodes[slug] = try NodeFile(slug: slug, text: text)
         } else {
@@ -774,6 +771,8 @@ public final class SiteWorkspace {
         state.conflicts = []
         try store.saveBranchState(state)
         try rebuild()
+        // GitHub's version of a node (or its deletion) can leave a new picture here that no node uses.
+        if state.pendingAssets != nil { try dropUnusedPendingAssets() }
         // A node gone from GitHub takes its uncommitted editor state with it (a draft on it was a conflict, settled).
         for slug in store.workingStates(branch).keys where nodes[slug] == nil && !state.deleted.contains(slug) {
             try dropEditorState(slug)
@@ -838,6 +837,7 @@ public final class SiteWorkspace {
         case (_, .mine), (nil, _):
             break
         case let (.node(slug)?, .theirs):
+            try dropNewPictures(of: slug, queued: true)
             try dropQueued(path)
             try store.removeWorking(slug: slug, branch: branch)
             state.deleted.removeAll { $0 == slug }
@@ -863,24 +863,38 @@ public final class SiteWorkspace {
         } else {
             try store.saveBranchState(state)
             try rebuild()
+            if state.pendingAssets != nil { try dropUnusedPendingAssets() } // as in adopt
         }
     }
 
     /// Removes a path from every queued commit, dropping commits left empty.
     private func dropQueued(_ path: String) throws {
-        // The new pictures the dropped version of a node used go too, unless another queued node uses them.
-        let dropped = queue.flatMap(\.changes).filter { $0.path == path }.compactMap(\.content)
         for i in queue.indices { queue[i].changes.removeAll { $0.path == path } }
-        let kept = queue.flatMap(\.changes).filter { $0.blobSHA == nil }.compactMap(\.content)
-        for i in queue.indices {
-            queue[i].changes.removeAll { c in
-                guard c.blobSHA != nil else { return false }
-                let site = SitePath.sitePath(repo: c.path)
-                return dropped.contains { $0.contains(site) } && !kept.contains { $0.contains(site) }
-            }
-        }
         queue.removeAll { $0.changes.isEmpty }
         try store.saveQueue(queue, for: branch)
+    }
+
+    /// Forgets the new pictures this node uses and no other node does: the uncommitted ones, and with `queued` the
+    /// queued ones too. For Revert and Use GitHub's: a replaced picture keeps its path, so the node's text going back
+    /// would not take it along. "Uses" covers the node as shown and its queued versions (a queued one may be about to
+    /// be dropped, or still be pushed for another node).
+    private func dropNewPictures(of slug: String, queued: Bool) throws {
+        let path = Self.path(slug)
+        let queuedNodes = queue.flatMap(\.changes).filter { $0.blobSHA == nil && Self.isNodePath($0.path) }
+        let mine = queuedNodes.filter { $0.path == path }.compactMap(\.content)
+        let theirs = queuedNodes.filter { $0.path != path }.compactMap(\.content)
+        let header = nodes[slug]?.header
+        let others = nodes.filter { $0.key != slug }.values.map(\.header)
+        let only = { (site: String) in
+            (header?.uses(site) == true || mine.contains { $0.contains(site) })
+                && !others.contains { $0.uses(site) } && !theirs.contains { $0.contains(site) }
+        }
+        try dropPendingAssets(where: only)
+        guard queued else { return }
+        let before = queue
+        for i in queue.indices { queue[i].changes.removeAll { $0.blobSHA != nil && only(SitePath.sitePath(repo: $0.path)) } }
+        queue.removeAll { $0.changes.isEmpty }
+        if queue != before { try store.saveQueue(queue, for: branch) }
     }
 
     // MARK: Branches

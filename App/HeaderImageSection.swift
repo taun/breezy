@@ -15,12 +15,22 @@ struct HeaderImageSection: View {
     // yet, as "slug|address" so only the node it was typed for shows it.
     @AppStorage("header.thumbnail") private var makeThumbnail = true
     @AppStorage("header.address") private var addressRaw = ""
-    @State private var importing = false
+    /// The branch and node a download is for ("branch|slug"): the view stays when another node is opened. One at a time.
+    @State private var importingNode: String?
+    private var thisNode: String { "\(workspace.branch)|\(slug)" }
+    private var importing: Bool { importingNode == thisNode }
 
     private var address: String {
-        get { addressRaw.hasPrefix(slug + "|") ? String(addressRaw.dropFirst(slug.count + 1)) : "" }
-        nonmutating set { addressRaw = newValue.isEmpty ? "" : "\(slug)|\(newValue)" }
+        get { Self.address(addressRaw, for: slug) }
+        nonmutating set { addressRaw = Self.stored(newValue, for: slug) }
     }
+
+    /// The node's unsent address from the stored "slug|address", or "" when it was typed for another node.
+    nonisolated static func address(_ stored: String, for slug: String) -> String {
+        stored.hasPrefix(slug + "|") ? String(stored.dropFirst(slug.count + 1)) : ""
+    }
+
+    nonisolated static func stored(_ address: String, for slug: String) -> String { address.isEmpty ? "" : "\(slug)|\(address)" }
 
     var body: some View {
         Section {
@@ -47,12 +57,12 @@ struct HeaderImageSection: View {
                     .keyboardType(.URL)
                     #endif
                     .onSubmit { Task { await importAddress() } }
-                    .disabled(importing)
+                    .disabled(importingNode != nil)
                 if importing {
                     ProgressView().controlSize(.small)
                 } else {
                     Button("Import") { Task { await importAddress() } }
-                        .disabled(address.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .disabled(address.trimmingCharacters(in: .whitespaces).isEmpty || importingNode != nil)
                         .buttonStyle(.borderless)
                 }
             }
@@ -99,9 +109,13 @@ struct HeaderImageSection: View {
     }
 
     private func importAddress() async {
-        guard !importing else { return }
-        importing = true
-        defer { importing = false }
-        if await model.importHeaderImage(slug: slug, from: address, makeThumbnail: makeThumbnail) { address = "" }
+        let typed = address, node = slug
+        guard importingNode == nil, !typed.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        importingNode = thisNode
+        defer { importingNode = nil }
+        // Cleared only if it is still this node's address: another node's may have been typed meanwhile.
+        if await model.importHeaderImage(slug: node, from: typed, makeThumbnail: makeThumbnail), addressRaw == Self.stored(typed, for: node) {
+            addressRaw = ""
+        }
     }
 }

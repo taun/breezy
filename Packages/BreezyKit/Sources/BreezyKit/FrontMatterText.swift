@@ -44,7 +44,8 @@ public struct FrontMatterText: Equatable, Sendable {
 
     /// Sets or (with nil) removes one scalar child of a top-level mapping such as `header`, touching only that child's
     /// line: its siblings, comments and order stay as written. A mapping left empty is removed. A flow-style mapping
-    /// (`header: {image: x}`) is first rewritten as a block with its entries in order, each value as written; one with
+    /// (`header: {image: x}`) is first rewritten as a block with its entries in order, each value as written (a comment
+    /// after it stays on the parent's line); one with
     /// a value that is not a plain value (a list or a mapping), or a parent that is not a mapping, is left alone and throws.
     public mutating func setChild(_ parent: String, _ key: String, to value: String?) throws {
         guard var r = range(of: parent) else {
@@ -54,7 +55,10 @@ public struct FrontMatterText: Equatable, Sendable {
         let head = lines[r.lowerBound]
         let rest = head.drop { $0 != ":" }.dropFirst().trimmingCharacters(in: .whitespaces)
         if !rest.isEmpty, !rest.hasPrefix("#") {
-            lines.replaceSubrange(r, with: ["\(parent):"] + (try Self.blockLines(flow: rest, parent: parent)))
+            // A comment after the value stays, on the parent's line.
+            let (value, comment) = Self.splitComment(rest)
+            let parentLine = comment.isEmpty ? "\(parent):" : "\(parent): \(comment)"
+            lines.replaceSubrange(r, with: [parentLine] + (try Self.blockLines(flow: value, parent: parent)))
             r = range(of: parent) ?? r.lowerBound..<(r.lowerBound + 1)
         }
         let children = r.dropFirst()
@@ -70,9 +74,33 @@ public struct FrontMatterText: Equatable, Sendable {
             lines.insert("\(indent)\(key): \(YAMLFormat.scalarOrURL(v))", at: at)
         case (nil, nil): break
         }
-        if let again = range(of: parent), again.count == 1, lines[again.lowerBound].trimmingCharacters(in: .whitespaces) == "\(parent):" {
+        if let again = range(of: parent), again.count == 1,
+           lines[again.lowerBound].range(of: "^\(parent):\\s*(#.*)?$", options: .regularExpression) != nil {
             lines.remove(at: again.lowerBound)
         }
+    }
+
+    /// A one-line value and the comment after it ("# …", or ""): a `#` inside quotes or brackets, or not after a
+    /// space, is part of the value.
+    static func splitComment(_ text: String) -> (value: String, comment: String) {
+        var depth = 0, quote: Character?, escaped = false, previous: Character = " "
+        for i in text.indices {
+            let c = text[i]
+            defer { previous = c }
+            if let q = quote {
+                if escaped { escaped = false } else if q == "\"" && c == "\\" { escaped = true } else if c == q { quote = nil }
+                continue
+            }
+            switch c {
+            case "'", "\"": quote = c
+            case "{", "[": depth += 1
+            case "}", "]": depth -= 1
+            case "#" where depth == 0 && previous.isWhitespace:
+                return (text[..<i].trimmingCharacters(in: .whitespaces), String(text[i...]))
+            default: break
+            }
+        }
+        return (text, "")
     }
 
     /// The entries of a one-line value (`{image: x, teaser: y}`, or null) as block lines, in order and as written.
@@ -83,7 +111,11 @@ public struct FrontMatterText: Equatable, Sendable {
         guard case let .mapping(mapping) = node else { throw unsupported }
         return try mapping.map { k, v in
             guard let name = k.scalar?.string, let scalar = v.scalar else { throw unsupported }
-            return "  \(name): \(scalar.style == .plain ? scalar.string : YAMLFormat.quoted(scalar.string))"
+            switch scalar.style {
+            case .plain: return "  \(name): \(scalar.string)"
+            case .singleQuoted: return "  \(name): '\(scalar.string.replacingOccurrences(of: "'", with: "''"))'"
+            default: return "  \(name): \(YAMLFormat.quoted(scalar.string))"
+            }
         }
     }
 

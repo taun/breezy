@@ -38,9 +38,23 @@ import BreezyKitTestSupport
     }
 
     @Test func aFlowStyleHeaderKeepsItsOrderAndValuesAsWritten() throws {
-        var n = try node("title: N\nheader: {teaser: /t.png, show: true, image_description: 'A, b'}")
+        var n = try node("title: N\nheader: {teaser: /t.png, show: true, image_description: 'A, b', alt: \"c\"} # credit: Bob")
         try n.setHeader(image: "/b.png", teaser: "/t.png")
-        #expect(n.frontMatter.lines == ["title: N", "header:", "  teaser: /t.png", "  show: true", "  image_description: \"A, b\"", "  image: /b.png"])
+        #expect(n.frontMatter.lines == ["title: N", "header: # credit: Bob", "  teaser: /t.png", "  show: true", "  image_description: 'A, b'",
+                                        "  alt: \"c\"", "  image: /b.png"])
+    }
+
+    @Test func aCommentAfterAOneLineHeaderIsKeptAndGoesWithIt() throws {
+        var n = try node("title: N\nheader: {image: /a.jpg} # see {credits}")
+        try n.setHeader(image: "/b.jpg", teaser: nil)
+        #expect(n.frontMatter.lines == ["title: N", "header: # see {credits}", "  image: /b.jpg"])
+        try n.setHeader(image: nil, teaser: nil)
+        #expect(n.frontMatter.lines == ["title: N"])
+        var empty = try node("title: N\nheader: null # later")
+        try empty.setHeader(image: "/b.jpg", teaser: nil)
+        #expect(empty.frontMatter.lines == ["title: N", "header: # later", "  image: /b.jpg"])
+        #expect(FrontMatterText.splitComment("{a: 'x # y'} # z") == ("{a: 'x # y'}", "# z"))
+        #expect(FrontMatterText.splitComment("{a: x#y}") == ("{a: x#y}", ""))
     }
 
     @Test func aHeaderBreezyCannotRewriteIsLeftAlone() throws {
@@ -140,6 +154,49 @@ import BreezyKitTestSupport
         #expect(try await ws.sync(client: client(m)) == .conflicts(1))
         try ws.resolve("src/nodes/a.md", with: .theirs)
         #expect(ws.queue.isEmpty && !ws.assetPaths.contains("/assets/images/a-header.jpg"))
+    }
+
+    /// GitHub's version of the node has the same picture path: the picture replaced here goes with the rest of mine.
+    @Test func usingGitHubsVersionDropsAReplacedPictureAtTheSamePath() async throws {
+        let m = MockTransport.site()
+        let ws = try await SiteWorkspace.download("main", client: client(m), store: tempStore())
+        try ws.setHeaderImage(slug: "a", from: testImage(width: 800, height: 600), makeThumbnail: false)
+        let theirs = try #require(ws.nodes["a"]?.rendered()).replacingOccurrences(of: "title: \"A\"", with: "title: \"Theirs A\"")
+        try ws.update("a") { try $0.setSummary("Mine") }
+        m.remoteMoves(to: "c9", changing: ["src/nodes/a.md": theirs])
+        // Uncommitted here: the conflict is between the working edit and GitHub's.
+        #expect(try await ws.sync(client: client(m)) == .conflicts(1))
+        try ws.resolve("src/nodes/a.md", with: .theirs)
+        #expect(ws.nodes["a"]?.header.image == "/assets/images/a-header.jpg" && ws.state.pendingAssets == nil && !ws.hasChanges)
+    }
+
+    @Test func aQueuedPictureAnotherNodeNowUsesStaysWhenItsNodeTakesGitHubsVersion() async throws {
+        let m = MockTransport.site()
+        let ws = try await SiteWorkspace.download("main", client: client(m), store: tempStore())
+        try ws.setHeaderImage(slug: "a", from: testImage(width: 800, height: 600), makeThumbnail: false)
+        try ws.commit(message: "Picture")
+        try ws.update("b") { try $0.setHeader(image: "/assets/images/a-header.jpg", teaser: nil) }
+        m.remoteMoves(to: "c9", changing: ["src/nodes/a.md": "---\ntitle: \"Theirs A\"\ntype: person\nlinks: []\n---\n"])
+        #expect(try await ws.sync(client: client(m)) == .conflicts(1))
+        try ws.resolve("src/nodes/a.md", with: .theirs)
+        #expect(ws.queue.flatMap(\.changes).map(\.path) == ["src/assets/images/a-header.jpg"])
+    }
+
+    /// The queued versions count: the picture stays for another node's queued commit, and goes when only the
+    /// dropped version of this node used it (here the node shows another banner since).
+    @Test func queuedVersionsDecideWhetherAQueuedPictureStays() async throws {
+        let m = MockTransport.site()
+        let ws = try await SiteWorkspace.download("main", client: client(m), store: tempStore())
+        try ws.setHeaderImage(slug: "a", from: testImage(width: 800, height: 600), makeThumbnail: false)
+        try ws.commit(message: "Picture for a")
+        try ws.update("b") { try $0.setHeader(image: "/assets/images/a-header.jpg", teaser: nil) }
+        try ws.commit(message: "b uses it")
+        try ws.update("b") { try $0.setHeader(image: nil, teaser: nil) }
+        try ws.update("a") { try $0.setHeader(image: "/assets/images/other.png", teaser: nil) }
+        m.remoteMoves(to: "c9", changing: ["src/nodes/a.md": "---\ntitle: \"Theirs A\"\ntype: person\nlinks: []\n---\n"])
+        #expect(try await ws.sync(client: client(m)) == .conflicts(1))
+        try ws.resolve("src/nodes/a.md", with: .theirs)
+        #expect(ws.queue.flatMap(\.changes).map(\.path).contains("src/assets/images/a-header.jpg")) // b's queued commit needs it
     }
 
     @Test func oldQueueFilesWithoutBlobsStillDecode() throws {
