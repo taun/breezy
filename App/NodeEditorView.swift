@@ -90,8 +90,8 @@ struct NodeEditorView: View {
         #endif
     }
 
-    /// Segmented everywhere, like Edit/Preview (issue #17); symbols at compact width, names elsewhere. The section
-    /// header below it names the selected tab.
+    /// Segmented everywhere, like Edit/Preview (issue #17); symbols at compact width, names elsewhere. At compact
+    /// width the section header below it names the selected tab; elsewhere the tab's name is enough (`TabSection`).
     private var tabPicker: some View {
         Picker("Section", selection: tabBinding) {
             ForEach(Tab.allCases) { t in
@@ -123,7 +123,7 @@ struct NodeEditorView: View {
     }
 
     @ViewBuilder private func titleSection(_ node: NodeFile) -> some View {
-        Section("Title") {
+        TabSection("Title", named: compact) {
             TextField("Title", text: bind(\.title) { try $0.setTitle($1) })
                 .focused($focus, equals: .title)
             TypeField(type: bind(\.type) { try $0.setType($1) }, known: workspace.types)
@@ -188,7 +188,7 @@ struct NodeEditorView: View {
         VStack(alignment: .leading, spacing: 0) {
             if !controlsHidden {
                 tabHeader.padding(.vertical, 8)
-                GroupedStyle.header("Body")
+                if compact { GroupedStyle.header("Body") }
             }
             VStack(spacing: 0) {
                 if !controlsHidden {
@@ -286,8 +286,8 @@ struct NodeEditorView: View {
                 #endif
                 switch tab {
                 case .title: titleSection(node)
-                case .date: DateSection(date: node.date) { new in edit { try $0.setDate(new) } }
-                case .links: LinkEditorView(workspace: workspace, slug: slug)
+                case .date: DateSection(date: node.date, named: compact) { new in edit { try $0.setDate(new) } }
+                case .links: LinkEditorView(workspace: workspace, slug: slug, named: compact)
                 case .media: media(node)
                 case .body: EmptyView() // never: the Body tab is bodyTab (the switch must still be exhaustive)
                 }
@@ -380,9 +380,40 @@ private enum GroupedStyle {
     }
 }
 
+/// A section of an editor tab, with a header only when `named`: at compact width the tabs are symbols and the header
+/// names the tab; elsewhere the tab picker already does.
+struct TabSection<Content: View, Footer: View>: View {
+    let title: String
+    let named: Bool
+    @ViewBuilder let content: Content
+    @ViewBuilder let footer: Footer
+
+    init(_ title: String, named: Bool, @ViewBuilder content: () -> Content, @ViewBuilder footer: () -> Footer) {
+        self.title = title
+        self.named = named
+        self.content = content()
+        self.footer = footer()
+    }
+
+    var body: some View {
+        if named {
+            Section { content } header: { Text(title) } footer: { footer }
+        } else {
+            Section { content } footer: { footer }
+        }
+    }
+}
+
+extension TabSection where Footer == EmptyView {
+    init(_ title: String, named: Bool, @ViewBuilder content: () -> Content) {
+        self.init(title, named: named, content: content) { EmptyView() }
+    }
+}
+
 /// Date with year or day precision; year precision is the site's bare-year style.
 struct DateSection: View {
     let date: NodeDate?
+    let named: Bool
     let set: (NodeDate?) -> Void
 
     private static var utc: Calendar {
@@ -394,7 +425,7 @@ struct DateSection: View {
     private var year: Int { Int(date?.iso.prefix(4) ?? "") ?? Calendar.current.component(.year, from: .now) }
 
     var body: some View {
-        Section("Date") {
+        TabSection("Date", named: named) {
             Toggle("Dated", isOn: Binding(get: { date != nil }, set: { on in
                 set(on ? NodeDate(iso: "\(Calendar.current.component(.year, from: .now))-01-01", precision: .year) : nil)
             }))

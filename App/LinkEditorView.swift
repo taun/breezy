@@ -6,6 +6,8 @@ struct LinkEditorView: View {
     @Environment(AppModel.self) private var model
     let workspace: SiteWorkspace
     let slug: String
+    /// Whether the section shows its "Links" header (see `TabSection`).
+    let named: Bool
 
     private var links: [NodeLink] { workspace.nodes[slug]?.links ?? [] }
     private var targets: [NodeFile] { workspace.nodes.values.filter { $0.slug != slug }.sorted { $0.title < $1.title } }
@@ -14,7 +16,7 @@ struct LinkEditorView: View {
     }
 
     var body: some View {
-        Section {
+        TabSection("Links", named: named) {
             ForEach(Array(links.enumerated()), id: \.offset) { i, link in
                 HStack {
                     RelationField(rel: link.rel) { rel in modify(i) { $0.rel = rel } }
@@ -48,8 +50,6 @@ struct LinkEditorView: View {
                     }
                 }
             }
-        } header: {
-            Text("Links")
         } footer: {
             Text("Links point from this node to the target. Plain links mean “led to”.")
         }
