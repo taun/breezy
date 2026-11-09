@@ -51,6 +51,8 @@ A macOS / iOS / iPadOS app (SwiftUI, multiplatform) for editing the content of t
 
 **Before every push:** run the tests (`scripts/test.sh`, both kit and app) and `/code-review` on the changes being pushed, and fix what either finds. Re-run both after the fixes. Push only when the tests pass and the review is clean: no correctness finding left unaddressed, and every other finding either fixed or given a stated reason (in the commit message or PR). Reviews always find something to polish, so "clean" does not mean an empty report.
 
+**Every push to `main` that changes the app gets its own version**, so TestFlight builds can be told apart by eye rather than by their 12-digit build numbers. The app is everything a build is made from (`BUILD_INPUTS` in `scripts/version.sh`: `App/`, `Packages/`, `project.yml`, `scripts/testflight.sh`). Before pushing such a change: raise `MARKETING_VERSION` in `project.yml` (minor when anything user-visible is new, patch for fixes only), move the **Unreleased** entries in `CHANGELOG.md` under `## [X.Y.Z] - YYYY-MM-DD` and update the compare links at the bottom, commit, and run `scripts/version.sh check` (it must say `new`). Do not tag: `scripts/testflight.sh` (in CI, or run locally on `main`) tags `vX.Y.Z` once it has uploaded that version, and refuses an app change under a version already tagged. Pushes that change nothing in the app keep the version.
+
 ```
 scripts/test.sh [kit|app]       # BreezyKit tests (swift test; `kit --filter X` passes args) and the app tests (macOS)
 scripts/build.sh [macos|ios]    # xcodegen generate + unsigned builds for macOS and/or the iOS Simulator
@@ -69,7 +71,7 @@ scripts/simulator.sh [device]   # build, install in the simulator seeded with th
 
 ## Conventions
 
-- Add a line under **Unreleased** in `CHANGELOG.md` for every user-visible change. Releasing is described in `README.md` (version in `project.yml`, then an annotated `vX.Y.Z` tag).
+- Add a line under **Unreleased** in `CHANGELOG.md` for every user-visible change; the push that ships it moves those lines under its new version (see *Every push to `main`* above, and `README.md` › Releasing).
 - New device UI state gets `@AppStorage` keys; new per-node editor state goes in `EditorState` (see State restoration). New features must work offline, or degrade clearly when offline (see Offline-first).
 - Keep logic in BreezyKit with tests; network behavior is tested through `MockTransport` (in the `BreezyKitTestSupport` library), never against GitHub.
 - App-layer logic (`AppModel`, navigation policies such as `CompactNavigation`) is tested in `AppTests/` (target `BreezyTests`, macOS). It compiles the app sources directly rather than hosting the app, and `Harness` wires `AppModel` to a fake GitHub, a temporary `LocalStore` and its own `UserDefaults`. Every bug fixed in the app gets a regression test there when the logic can be expressed without a view; keep view code thin so it can.

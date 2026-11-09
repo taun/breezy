@@ -58,7 +58,7 @@ BREEZY_FRESH=1 BREEZY_SANDBOX=1 scripts/simulator.sh "iPhone 15 Pro"
 GitHub Actions (macOS runners, free for this public repo) runs three workflows in `.github/workflows/`:
 
 - **Test:** every branch and pull request: the BreezyKit and app tests, and an iOS build.
-- **TestFlight:** when the app changes on `main`, tests, archives the iOS app and uploads it to TestFlight. The build number is the UTC time (`YYYYMMDDHHMM`). It can also be run by hand (Actions › TestFlight › Run workflow), and `scripts/testflight.sh` does the same locally with `ASC_KEY_PATH` pointing at the `.p8` file.
+- **TestFlight:** on every push to `main`, checks the version (see Releasing) and, when it is new, tests, archives the iOS app and uploads it to TestFlight. The build number is the UTC time (`YYYYMMDDHHMM`). It can also be run by hand (Actions › TestFlight › Run workflow), and `scripts/testflight.sh` does the same locally with `ASC_KEY_PATH` pointing at the `.p8` file.
 - **Execute issue:** adding the `execute` label to an issue has Claude implement it with the [Claude Code GitHub Action](https://github.com/anthropics/claude-code-action), following `CLAUDE.md`. If the tests pass, the commits are pushed straight to `main` (closing the issue), a TestFlight build is uploaded, and the result is commented on the issue. If anything fails, nothing is pushed, the label is removed, and the comment links to the run; add the label again to retry. Only issues opened **and** labeled by the repo owner run, because the issue text is Claude's instructions. Claude cannot drive the simulator there, so UI changes still need a look on a device. When other people contribute, switch the push job to opening a pull request instead.
 
 One-time setup:
@@ -79,6 +79,10 @@ Without the App Store Connect secrets the TestFlight step is skipped with a noti
 
 ## Releasing
 
-1. Move the **Unreleased** entries in `CHANGELOG.md` under a new version heading with the date.
-2. Set `MARKETING_VERSION` in `project.yml` to that version. For TestFlight or the App Store, also raise `CURRENT_PROJECT_VERSION` (the build number) for every upload.
-3. Commit, then tag: `git tag -a vX.Y.Z -m "Breezy X.Y.Z"` and `git push origin main vX.Y.Z`.
+Every push to `main` that changes the app is a release with its own version, so each TestFlight build can be told apart. The app is everything a build is made from: `BUILD_INPUTS` in `scripts/version.sh`.
+
+1. Raise `MARKETING_VERSION` in `project.yml`: minor when anything user-visible is new, patch for fixes only. The build number (`CURRENT_PROJECT_VERSION`) is set by `scripts/testflight.sh` to the UTC time; leave it.
+2. Move the **Unreleased** entries in `CHANGELOG.md` under `## [X.Y.Z] - YYYY-MM-DD`, and update the compare links at the bottom.
+3. Commit, run `scripts/version.sh check` (it must say `new`), and push.
+
+The TestFlight workflow runs the same check first, and `scripts/testflight.sh` runs it again wherever it runs. A new version is tested, uploaded, then tagged `vX.Y.Z` (builds of `main` only); a version already tagged, with the app unchanged since, is not uploaded again (a hand run with **force**, or `FORCE=1` locally, re-uploads it); an app change under a version already tagged fails with a message saying to raise it. Pull requests are checked the same way, and the Execute issue workflow raises the version in Claude's commit. Pushes that change nothing in the app keep the version.

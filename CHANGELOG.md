@@ -4,6 +4,8 @@ All notable changes to Breezy are documented here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-09
+
 ### Added
 
 - **In RSS feed** (Title tab, under the Draft switch): a live node is left out of the site's RSS feed until you switch this on, which writes today's date to `published` (`date` stays when the thing happened) and shows it. Going back to draft switches it off.
@@ -63,5 +65,6 @@ First release. Breezy edits the content of the taun.org Eleventy site (`taun/tau
 - **Picks up where you left off:** relaunching restores the branch, the selected node, the screen that was showing, open sheets, drafts, search and filter, and the cursor, even after the app was swiped away.
 - **Sync status** in the toolbar: synced, offline, commits waiting to push, conflicts, failed, or no token.
 
-[Unreleased]: https://github.com/taun/breezy/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/taun/breezy/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/taun/breezy/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/taun/breezy/releases/tag/v1.0.0

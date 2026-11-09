@@ -1,13 +1,17 @@
 name: TestFlight
 
-# Uploads a TestFlight build of the iOS app whenever the app changes on main, after the tests pass. Also run by hand
+# Uploads a TestFlight build of the iOS app whenever main has a new version (scripts/version.sh), after the tests pass. Also run by hand
 # (Actions › TestFlight › Run workflow) and by the Execute workflow. Needs the secrets ASC_KEY_ID, ASC_ISSUER_ID and
 # ASC_KEY_P8; without them the upload is skipped with a notice.
 on:
   push:
-    branches: [main]
-    paths: ["App/**", "Packages/**", "project.yml", "scripts/testflight.sh"]
+    branches: [main] # every push: the version job decides, from BUILD_INPUTS in scripts/version.sh
   workflow_dispatch:
+    inputs:
+      force:
+        description: Upload again even if this version is already on TestFlight
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       ref:
@@ -28,15 +32,35 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Each version ships once (scripts/version.sh, README › Releasing): a new version is tested, uploaded and then
+  # tagged by scripts/testflight.sh; one already shipped, with the app unchanged since, is skipped (unless a hand run
+  # forces it); an app change under a shipped version fails here, before any macOS time is spent.
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      status: ${{ steps.check.outputs.status }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 0 # the tags
+      - id: check
+        run: scripts/version.sh check
+
   test:
-    if: ${{ !inputs.skip_tests }}
+    needs: version
+    if: ${{ (needs.version.outputs.status == 'new' || inputs.force) && !inputs.skip_tests }}
     uses: ./.github/workflows/test.yml
 
   upload:
-    needs: test
-    # Only after the tests passed, or were skipped (the Execute workflow has just run them). A cancelled test job
-    # (for example no macOS runner was available) must not let an untested build through.
-    if: ${{ !cancelled() && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
+    needs: [version, test]
+    # Only a new version (or a forced hand run), and only after the tests passed or were skipped (the Execute workflow
+    # has just run them). A cancelled test job (for example no macOS runner was available) must not let an untested
+    # build through.
+    if: >-
+      ${{ !cancelled() && needs.version.result == 'success' &&
+      (needs.version.outputs.status == 'new' || inputs.force) &&
+      (needs.test.result == 'success' || needs.test.result == 'skipped') }}
     runs-on: macos-26
     timeout-minutes: 45
     outputs:
@@ -45,15 +69,41 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 0 # scripts/testflight.sh checks the version against the tags
       - uses: ./.github/actions/setup
       - id: upload
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          FORCE: ${{ inputs.force && '1' || '' }}
+          TAG: "0" # the tag job does it, so this job, which builds third-party packages, keeps a read-only token
         run: |
           if [ -z "$ASC_KEY_ID" ]; then
             echo "::notice::TestFlight upload skipped: the ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_P8 secrets are not set."
             exit 0
           fi
           scripts/testflight.sh
+
+  # Marks the uploaded version as shipped (scripts/version.sh), so it is not uploaded again and the next app change must
+  # raise it. Builds of main only (pushes, and the Execute workflow); a hand run on another branch is a trial.
+  tag:
+    needs: [version, upload]
+    if: ${{ needs.upload.outputs.build != '' && needs.version.outputs.status == 'new' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          version=$(scripts/version.sh)
+          if git tag -a "v$version" -m "Breezy $version" && git push origin "v$version"; then
+            echo "Tagged v$version."
+          else
+            # The build is on TestFlight; say so rather than failing the run.
+            echo "::warning::Breezy $version was uploaded but not tagged: tag it by hand (git tag -a v$version <commit> && git push origin v$version)."
+          fi

@@ -11,6 +11,16 @@ permissions:
   contents: read
 
 jobs:
+  # A pull request that changes the app must raise the version (README › Releasing), so it can be merged as is.
+  version:
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the tags
+      - run: scripts/version.sh check
+
   test:
     runs-on: macos-26
     timeout-minutes: 45

@@ -51,13 +51,21 @@ jobs:
             Follow CLAUDE.md. In this environment:
             - There is no simulator UI automation (XcodeBuildMCP), no Keychain token and no access to the sandbox repo.
               Check your work with scripts/test.sh and scripts/build.sh, and add tests for new logic as CLAUDE.md says.
-            - Add a line under Unreleased in CHANGELOG.md for every user-visible change.
+            - Give the change its own version, as CLAUDE.md says: raise MARKETING_VERSION in project.yml (minor when
+              anything user-visible is new, patch for fixes only), put the change's CHANGELOG.md lines under a new
+              "## [X.Y.Z] - YYYY-MM-DD" heading (today, UTC) below the empty Unreleased heading, and update the compare
+              links at the bottom. Only when the change touches a build input (BUILD_INPUTS in scripts/version.sh);
+              other changes keep the version. Check with scripts/version.sh check. Do not tag: the TestFlight upload
+              tags the version.
             - Commit with git on the current branch. End the last commit message with a line
               "Closes #${{ github.event.issue.number }}", then a blank line and
               "Co-Authored-By: Claude <noreply@anthropic.com>".
             - Do not push, open pull requests, or comment on the issue; the workflow does that after the tests pass.
             - If the issue is unclear, or needs something only the owner can do (accounts, secrets, testing on a
               device), make no commit and say what is needed in your final message.
+      - name: Version
+        # Before the long test run: an app change must raise the version (README › Releasing).
+        run: scripts/version.sh check
       - name: Test
         run: scripts/test.sh && scripts/build.sh
       - name: Package the commits
@@ -85,6 +93,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: main
+          fetch-depth: 0 # the tags, for the version check
       - uses: actions/download-artifact@v8
         with:
           name: change
@@ -94,11 +103,15 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git am "$RUNNER_TEMP/change.patch"
+          # Again on main as it is now: someone may have shipped a version while Claude worked.
+          scripts/version.sh check
           git push origin HEAD:main
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   release:
     needs: push
+    permissions:
+      contents: write # the TestFlight workflow's tag job tags the version it uploads
     uses: ./.github/workflows/testflight.yml
     with:
       ref: ${{ needs.push.outputs.sha }}
@@ -124,7 +137,7 @@ jobs:
           # The pushed "Closes #N" usually closes the issue already; closing again is harmless.
           case "$RESULT" in
             success/success/success)
-              if [ -n "$BUILD" ]; then shipped="TestFlight build $BUILD uploaded."; else shipped="TestFlight upload skipped (secrets not set)."; fi
+              if [ -n "$BUILD" ]; then shipped="TestFlight build $BUILD uploaded."; else shipped="No TestFlight build: the app did not change, or the upload secrets are not set."; fi
               gh issue comment "$ISSUE" --body "Done in $SHA. $shipped [Run]($RUN)"
               gh issue close "$ISSUE" || true ;;
             success/success/*)
