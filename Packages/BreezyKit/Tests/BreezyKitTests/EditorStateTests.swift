@@ -147,7 +147,7 @@ extension EditorState.Draft {
         let (ws, _, _) = try await site()
         try ws.setDraft("b", "New")
         #expect(!ws.draftIsStale("b"))
-        try ws.update("b") { $0.body = "Changed\n" }
+        try ws.update("b") { $0.setBody("Changed\n") }
         #expect(ws.draftIsStale("b"))
         try ws.rebaseDraft("b")
         #expect(!ws.draftIsStale("b"))

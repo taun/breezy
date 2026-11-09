@@ -70,6 +70,11 @@ struct DraftView: View {
                     }
                 }
                 .contextMenu { actions }
+                // Over the draft only, not the original beside it. Copy Original brings in the body as it is: like
+                // the file, it is left alone.
+                .checkingCharacters($draft, .text, field: "The draft", sources: [saved, original], overlay: true) { v in
+                    if v != saved { setDraft(v) }
+                }
             if BodyDraft.isStarted(draft) {
                 Divider()
                 HStack {
@@ -98,7 +103,6 @@ struct DraftView: View {
 
     var body: some View {
         content
-            .onChange(of: draft) { _, v in if v != saved { setDraft(v) } }
             // Changes from elsewhere (a sync, Revert Draft).
             .onChange(of: saved) { _, v in if v != draft { draft = v } }
     }

@@ -124,15 +124,22 @@ struct NodeEditorView: View {
 
     @ViewBuilder private func titleSection(_ node: NodeFile) -> some View {
         TabSection("Title", named: compact) {
-            TextField("Title", text: bind(\.title) { try $0.setTitle($1) })
-                .focused($focus, equals: .title)
+            CheckedTextField("Title", text: bind(\.title) { try $0.setTitle($1) }, focus: $focus, equals: .title)
             TypeField(type: bind(\.type) { try $0.setType($1) }, known: workspace.types)
-            TextField("Summary", text: bind(\.summary) { try $0.setSummary($1) }, axis: .vertical)
-                .focused($focus, equals: .summary)
-            CommitTextField("Tags, comma separated", value: node.tags.joined(separator: ", ")) { text in
-                edit { try $0.setTags(text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }) }
+            CheckedTextField("Summary", text: bind(\.summary) { try $0.setSummary($1) }, kind: .text, axis: .vertical,
+                             focus: $focus, equals: .summary)
+            CommitTextField("Tags, comma separated", value: node.tags.joined(separator: ", "), name: "Tags") { text in
+                edit { try $0.setTags(text.split(separator: ",").map(String.init)) } // setTags trims and drops empty tags
             }
             Toggle("Draft (not published)", isOn: bind(\.draft) { try $0.setDraft($1) })
+            if !node.draft {
+                Toggle(isOn: Binding(
+                    get: { node.published != nil },
+                    set: { on in edit { try $0.setPublished(on ? NodeFile.todayISO() : nil) } })) {
+                    Text("In RSS feed")
+                    if let published = node.published { Text("Since \(published)") }
+                }
+            }
         }
     }
 
@@ -141,7 +148,7 @@ struct NodeEditorView: View {
         Section("Media") {
             ForEach(NodeFile.stringKeys, id: \.self) { key in
                 HStack {
-                    TextField(key.capitalized, text: Binding(
+                    CheckedTextField(key.capitalized, text: Binding(
                         get: { node.strings[key] ?? "" },
                         set: { v in edit { try $0.setString(key, v) } }))
                         .autocorrectionDisabled()
@@ -416,11 +423,7 @@ struct DateSection: View {
     let named: Bool
     let set: (NodeDate?) -> Void
 
-    private static var utc: Calendar {
-        var c = Calendar(identifier: .gregorian)
-        c.timeZone = TimeZone(identifier: "UTC")!
-        return c
-    }
+    private static var utc: Calendar { .gregorianUTC }
 
     private var year: Int { Int(date?.iso.prefix(4) ?? "") ?? Calendar.current.component(.year, from: .now) }
 
@@ -457,10 +460,7 @@ struct DateSection: View {
         return utc.date(from: DateComponents(year: p[0], month: p[1], day: p[2])) ?? .now
     }
 
-    static func toISO(_ d: Date) -> String {
-        let c = utc.dateComponents([.year, .month, .day], from: d)
-        return String(format: "%04d-%02d-%02d", c.year ?? 2000, c.month ?? 1, c.day ?? 1)
-    }
+    static func toISO(_ d: Date) -> String { NodeFile.isoDay(d, timeZone: utc.timeZone) }
 }
 
 /// Picks one of the existing files under src/assets.

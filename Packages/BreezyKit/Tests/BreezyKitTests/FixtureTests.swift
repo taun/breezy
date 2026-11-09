@@ -37,9 +37,11 @@ enum Fixtures {
             #expect(node.date?.iso == exp["date"] as? String, "\(f.key) date")
             #expect(node.date?.precision.rawValue == exp["datePrecision"] as? String, "\(f.key) precision")
             #expect(node.draft == exp["draft"] as? Bool, "\(f.key) draft")
+            #expect(node.published == exp["published"] as? String, "\(f.key) published")
             let expLinks = (exp["links"] as? [[String: String]] ?? []).map { NodeLink(to: $0["to"]!, rel: $0["rel"]!) }
             #expect(node.links == expLinks, "\(f.key) links")
-            #expect(node.linkWarnings.count == (exp["warnings"] as? [String] ?? []).count, "\(f.key) warnings")
+            let warnings = node.linkWarnings.count + (node.publishedWarning == nil ? 0 : 1)
+            #expect(warnings == (exp["warnings"] as? [String] ?? []).count, "\(f.key) warnings")
         }
     }
 

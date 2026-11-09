@@ -85,7 +85,7 @@ struct RelationField: View {
             .menuIndicator(.hidden)
             .fixedSize()
             .accessibilityLabel("Known relations")
-            CommitTextField("relation", value: rel) { text in
+            CommitTextField("relation", value: rel, name: "A relation") { text in
                 let n = Relations.normalize(text)
                 set(n.isEmpty ? Relations.defaultRel : n)
             }

@@ -1,3 +1,4 @@
+import BreezyKit
 import SwiftUI
 
 /// The node body editor. On iOS 18 / macOS 15 and later it also puts back the node's cursor or selection, kept in
@@ -31,15 +32,17 @@ struct BodyEditor: View {
             #if os(iOS)
             .background(TextKit1(edits: edits, selection: selection, restoreToken: restoreToken))
             #endif
-            .onChange(of: local) { _, v in
-                #if os(iOS)
-                edits &+= 1
-                #endif
-                if v != text { text = v }
-            }
+            #if os(iOS)
+            .onChange(of: local) { edits &+= 1 }
+            #endif
             // Changes from elsewhere (sync, conflict resolution, another node).
             .onChange(of: text) { _, v in if v != local { local = v } }
             .onChange(of: slug) { _, _ in local = text }
+            // Replacing the text moves the cursor: only after a paste with a refused character, or the first edit
+            // of a body that came from another tool with one in it (the issue banner says editing removes it).
+            .checkingCharacters($local, .text, field: "The body", sources: [text], scope: slug, overlay: true) { v in
+                if v != text { text = v }
+            }
     }
 
     @ViewBuilder private var editor: some View {
@@ -69,7 +72,8 @@ private struct SelectionRestoringEditor: View {
 
     private func save(_ s: TextSelection?) {
         guard let s, case let .selection(range) = s.indices else { return }
-        let r = [range.lowerBound.utf16Offset(in: text), range.upperBound.utf16Offset(in: text)]
+        // A selection made in a longer text (before refused characters were taken out) may end past this one.
+        let r = [min(range.lowerBound, text.endIndex).utf16Offset(in: text), min(range.upperBound, text.endIndex).utf16Offset(in: text)]
         if r != selection { onSelection(r) }
     }
 

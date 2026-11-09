@@ -81,6 +81,7 @@ struct MergeEditor: View {
             }
             Section("Merged result (starts as yours)") {
                 TextEditor(text: $text).font(.callout.monospaced()).frame(minHeight: 220)
+                    .checkingCharacters($text, .file, field: "The merged version", sources: [mine, theirs]) { _ in }
             }
         }
         .formStyle(.grouped)

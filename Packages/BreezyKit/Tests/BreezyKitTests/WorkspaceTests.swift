@@ -353,6 +353,8 @@ func client(_ m: MockTransport) -> GitHubClient { GitHubClient(repo: RepoRef(own
         try ws.commit(message: "Queued, not pushed")
         #expect(ws.state(of: "a") == .publish) // committed on the device is not live yet
         try ws.createNode(slug: "new-one", title: "New", type: "post")
+        #expect(ws.state(of: "new-one") == .draft) // new content starts as a draft
+        try ws.update("new-one") { try $0.setDraft(false) }
         #expect(ws.state(of: "new-one") == .publish)
         try ws.update("b") { try $0.setDraft(true) }
         #expect(ws.state(of: "b") == .draft) // draft wins even though b changed
@@ -387,8 +389,8 @@ func client(_ m: MockTransport) -> GitHubClient { GitHubClient(repo: RepoRef(own
         let ws = try await SiteWorkspace.download("main", client: client(m), store: tempStore())
         _ = try await ws.sync(client: client(m), publishedBranch: "main")
         try ws.createNode(slug: "draft-talk", title: "Draft Talk", type: "talk")
-        try ws.update("draft-talk") { try $0.setDraft(true) }
         try ws.createNode(slug: "new-talk", title: "New Talk", type: "talk")
+        try ws.update("new-talk") { try $0.setDraft(false) }
         func slugs(_ show: NodeShowFilter, type: String? = nil, search: String = "") -> [String] {
             ws.visibleNodes(search: search, type: type, show: show, sort: .title, draftsFirst: false).map(\.slug)
         }

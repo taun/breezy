@@ -196,7 +196,7 @@ struct NewNodeView: View {
 
     var body: some View {
         Form {
-            TextField("Title", text: $title)
+            CheckedTextField("Title", text: $title)
                 .onChange(of: title) { old, new in
                     // Suggest a slug from the title until the user edits the slug themselves.
                     if slug.isEmpty || slug == Self.slugify(old) { slug = Self.slugify(new) }
@@ -241,7 +241,7 @@ struct TypeField: View {
 
     var body: some View {
         HStack {
-            TextField("Type", text: $type)
+            CheckedTextField("Type", text: $type)
                 .autocorrectionDisabled()
                 #if os(iOS)
                 .textInputAutocapitalization(.never)

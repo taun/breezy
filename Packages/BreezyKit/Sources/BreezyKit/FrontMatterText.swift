@@ -143,9 +143,25 @@ public enum YAMLFormat {
         return safe ? s : quoted(s)
     }
 
-        public static func quoted(_ s: String) -> String {
-        let escaped = s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
-            .replacingOccurrences(of: "\n", with: "\\n")
+    /// Double-quoted with every character YAML cannot hold as written escaped, so no value can make the file invalid.
+    public static func quoted(_ s: String) -> String {
+        var escaped = ""
+        for c in s.unicodeScalars {
+            switch c {
+            case "\\": escaped += "\\\\"
+            case "\"": escaped += "\\\""
+            case "\n": escaped += "\\n"
+            case "\r": escaped += "\\r"
+            case "\t": escaped += "\\t"
+            default:
+                let v = c.value
+                if !TextRules.isAllowed(c, .line) {
+                    escaped += v > 0xFFFF ? String(format: "\\U%08X", v) : String(format: "\\u%04X", v)
+                } else {
+                    escaped.unicodeScalars.append(c)
+                }
+            }
+        }
         return "\"\(escaped)\""
     }
 
