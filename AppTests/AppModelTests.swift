@@ -300,11 +300,14 @@ struct Harness {
     }
 }
 
-/// Fetches from a table, like the web would.
+/// Fetches from a table, like the web would. With a gate, each fetch waits for it to open (or to be cancelled).
 struct FakeImageFetcher: ImageFetching {
     var images: [URL: Data] = [:]
     var failure: ImageFetchError?
+    var gate: AsyncStream<Void>?
     func fetch(_ url: URL) async throws -> Data {
+        if let gate { for await _ in gate { break } }
+        try Task.checkCancellation()
         if let failure { throw failure }
         guard let data = images[url] else { throw ImageFetchError.http(404) }
         return data
@@ -314,43 +317,51 @@ struct FakeImageFetcher: ImageFetching {
 @MainActor @Suite struct HeaderImageAppTests {
     /// A tiny valid PNG (1×1, opaque red, with an alpha channel): opaque, so it is saved as a JPEG.
     static let png = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==")!
+    static let url = URL(string: "https://example.com/cover.png")!
 
-    private func model(fetcher: FakeImageFetcher) -> (AppModel, Harness) {
+    private func model(fetcher: FakeImageFetcher) async throws -> (AppModel, SiteWorkspace, Harness) {
         let h = Harness()
         let model = AppModel(tokens: MemoryTokenStore("t"), defaults: h.defaults, transport: h.github, imageFetcher: fetcher, storeFor: { _ in h.store })
-        return (model, h)
+        await model.saveSettings(repo: "o/r", token: "")
+        return (model, try #require(model.workspace), h)
     }
 
+    /// A model whose downloads of `url` wait for `open`.
+    private func gatedModel() async throws -> (AppModel, SiteWorkspace, AsyncStream<Void>.Continuation, Harness) {
+        let (gate, open) = AsyncStream<Void>.makeStream()
+        let (model, ws, h) = try await model(fetcher: FakeImageFetcher(images: [Self.url: Self.png], gate: gate))
+        return (model, ws, open, h)
+    }
+
+    private func picture() -> NSItemProvider { NSItemProvider(item: Self.png as NSData, typeIdentifier: "public.png") }
+    private func link(_ url: URL = url) -> NSItemProvider { NSItemProvider(object: url as NSURL) }
+
+    private func succeeded(_ work: Task<Bool, Never>?) async -> Bool { await work?.value ?? false }
+
     @Test func aPictureFromAWebAddressIsCopiedAndTheAddressIsNotKept() async throws {
-        let url = URL(string: "https://example.com/cover.png")!
-        let (model, _) = model(fetcher: FakeImageFetcher(images: [url: Self.png]))
-        await model.saveSettings(repo: "o/r", token: "")
-        let ws = try #require(model.workspace)
-        #expect(await model.importHeaderImage(slug: "a", from: "example.com/cover.png", makeThumbnail: true))
+        let (model, ws, _) = try await model(fetcher: FakeImageFetcher(images: [Self.url: Self.png]))
+        #expect(await succeeded(model.importHeaderImage(slug: "a", from: "example.com/cover.png", makeThumbnail: true, in: ws)))
         let node = try #require(ws.nodes["a"])
         #expect(node.header.image == "/assets/images/a-header.jpg" && node.header.teaser == "/assets/images/a-teaser.jpg")
         #expect(!node.rendered().contains("example.com"))
         #expect(ws.imageData("/assets/images/a-header.jpg") != nil)
         #expect(model.errorMessage == nil)
+        #expect(model.headerImageImport == nil)
     }
 
     @Test func aFailedDownloadLeavesTheNodeAlone() async throws {
-        let (model, _) = model(fetcher: FakeImageFetcher(failure: .http(404)))
-        await model.saveSettings(repo: "o/r", token: "")
-        let ws = try #require(model.workspace)
+        let (model, ws, _) = try await model(fetcher: FakeImageFetcher(failure: .http(404)))
         let before = ws.nodes["a"]?.rendered()
-        #expect(await model.importHeaderImage(slug: "a", from: "https://example.com/missing.png", makeThumbnail: true) == false)
+        #expect(await succeeded(model.importHeaderImage(slug: "a", from: "https://example.com/missing.png", makeThumbnail: true, in: ws)) == false)
         #expect(ws.nodes["a"]?.rendered() == before && ws.state.pendingAssets == nil)
         #expect(model.errorMessage?.contains("404") == true)
     }
 
     @Test func somethingThatIsNotAnImageIsRefused() async throws {
         let url = URL(string: "https://example.com/page.html")!
-        let (model, _) = model(fetcher: FakeImageFetcher(images: [url: Data("<html>".utf8)]))
-        await model.saveSettings(repo: "o/r", token: "")
-        let ws = try #require(model.workspace)
+        let (model, ws, _) = try await model(fetcher: FakeImageFetcher(images: [url: Data("<html>".utf8)]))
         let before = ws.nodes["a"]?.rendered()
-        #expect(await model.importHeaderImage(slug: "a", from: url.absoluteString, makeThumbnail: true) == false)
+        #expect(await succeeded(model.importHeaderImage(slug: "a", from: url.absoluteString, makeThumbnail: true, in: ws)) == false)
         #expect(ws.nodes["a"]?.rendered() == before && model.errorMessage != nil)
     }
 
@@ -363,13 +374,102 @@ struct FakeImageFetcher: ImageFetching {
         #expect(stored != HeaderImageSection.stored("example.com/a.png", for: "b"))
     }
 
-    @Test func pastedBytesWorkOffline() async throws {
-        let (model, h) = model(fetcher: FakeImageFetcher())
-        await model.saveSettings(repo: "o/r", token: "")
+    @Test func aDroppedPictureWorksOffline() async throws {
+        let (model, ws, h) = try await model(fetcher: FakeImageFetcher())
         h.github.isOffline = true
-        let ws = try #require(model.workspace)
-        #expect(model.setHeaderImage(slug: "a", from: Self.png, makeThumbnail: false))
+        model.setOnlineForTesting(false)
+        #expect(await succeeded(model.dropHeaderImage([picture()], slug: "a", in: ws, makeThumbnail: true)))
+        #expect(ws.nodes["a"]?.header.image == "/assets/images/a-header.jpg" && ws.nodes["a"]?.header.teaser == "/assets/images/a-teaser.jpg")
+    }
+
+    /// A link dragged from a browser is copied like a typed address; an http one (which cannot be edited) as https.
+    @Test func aDroppedLinkIsDownloaded() async throws {
+        let (model, ws, _) = try await model(fetcher: FakeImageFetcher(images: [Self.url: Self.png]))
+        #expect(await succeeded(model.dropHeaderImage([link(URL(string: "http://example.com/cover.png")!)], slug: "a", in: ws, makeThumbnail: false)))
+        #expect(ws.nodes["a"]?.header.image == "/assets/images/a-header.jpg" && model.errorMessage == nil)
+    }
+
+    @Test func aDroppedLinkNeedsAConnection() async throws {
+        let (model, ws, _) = try await model(fetcher: FakeImageFetcher(images: [Self.url: Self.png]))
+        model.setOnlineForTesting(false)
+        #expect(await succeeded(model.dropHeaderImage([link()], slug: "a", in: ws, makeThumbnail: true)) == false)
+        #expect(ws.nodes["a"]?.header.image == nil && model.errorMessage == ImageFetchError.offline.localizedDescription)
+    }
+
+    @Test func aDropWithNoPictureSaysSo() async throws {
+        let (model, ws, _) = try await model(fetcher: FakeImageFetcher())
+        let before = ws.nodes["a"]?.rendered()
+        #expect(await succeeded(model.dropHeaderImage([NSItemProvider(object: "hi" as NSString)], slug: "a", in: ws, makeThumbnail: true)) == false)
+        #expect(ws.nodes["a"]?.rendered() == before && model.errorMessage?.contains("dropped") == true)
+    }
+
+    @Test func pastedBytesWorkOffline() async throws {
+        let (model, ws, h) = try await model(fetcher: FakeImageFetcher())
+        h.github.isOffline = true
+        model.setOnlineForTesting(false)
+        #expect(await succeeded(model.pasteHeaderImage([picture()], slug: "a", in: ws, makeThumbnail: false)))
         #expect(ws.nodes["a"]?.header.image == "/assets/images/a-header.jpg" && ws.nodes["a"]?.header.teaser == nil)
         #expect(ws.state.pendingAssets?.keys.sorted() == ["/assets/images/a-header.jpg"])
+    }
+
+    /// A link on the clipboard is not downloaded; an unreadable picture says why (not "no picture").
+    @Test func pasteTakesOnlyAPicture() async throws {
+        let (model, ws, _) = try await model(fetcher: FakeImageFetcher(images: [Self.url: Self.png]))
+        #expect(await succeeded(model.pasteHeaderImage([link()], slug: "a", in: ws, makeThumbnail: true)) == false)
+        #expect(ws.nodes["a"]?.header.image == nil && model.errorMessage?.contains("clipboard") == true)
+        let gone = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).png")
+        #expect(await succeeded(model.pasteHeaderImage([link(gone)], slug: "a", in: ws, makeThumbnail: true)) == false)
+        #expect(model.errorMessage == DroppedImage.LoadError.unreadable.localizedDescription)
+    }
+
+    /// One picture at a time, remembered by the model (not the Media tab, which goes away when another tab is chosen):
+    /// a second one waits for the first, which would otherwise replace it when it lands.
+    @Test func onePictureIsAddedAtATime() async throws {
+        let (model, ws, open, _) = try await gatedModel()
+        let first = try #require(model.dropHeaderImage([link()], slug: "a", in: ws, makeThumbnail: false))
+        #expect(model.headerImageImport?.isFor("a", in: ws) == true && model.headerImageImport?.fromAddress == false)
+        #expect(model.dropHeaderImage([picture()], slug: "a", in: ws, makeThumbnail: false) == nil)
+        #expect(model.errorMessage?.contains("still being added") == true)
+        #expect(model.pasteHeaderImage([picture()], slug: "b", in: ws, makeThumbnail: false) == nil)
+        #expect(model.importHeaderImage(slug: "b", from: Self.url.absoluteString, makeThumbnail: false, in: ws) == nil)
+        #expect(model.errorMessage != nil)
+        open.yield()
+        #expect(await first.value)
+        #expect(model.headerImageImport == nil && ws.nodes["a"]?.header.image != nil && ws.nodes["b"]?.header.image == nil)
+    }
+
+    @Test func aPictureOnItsWayCanBeCancelled() async throws {
+        let (model, ws, _, _) = try await gatedModel()
+        let work = try #require(model.importHeaderImage(slug: "a", from: Self.url.absoluteString, makeThumbnail: true, in: ws))
+        #expect(model.headerImageImport?.fromAddress == true)
+        model.cancelHeaderImage()
+        #expect(model.headerImageImport?.cancelled == true) // "Stopping…" until it has
+        #expect(await work.value == false)
+        #expect(model.headerImageImport == nil)
+        #expect(ws.nodes["a"]?.header.image == nil && ws.state.pendingAssets == nil && model.errorMessage == nil)
+    }
+
+    /// A branch switched while the picture was on its way has a new workspace: the old one must not write its stale
+    /// state over it, so the picture is cancelled, with a message (the switch may not have been the user's).
+    @Test func aPictureForABranchLeftBehindIsNotAdded() async throws {
+        let (model, ws, open, h) = try await gatedModel()
+        h.acceptBranch("feature")
+        let work = try #require(model.importHeaderImage(slug: "a", from: Self.url.absoluteString, makeThumbnail: true, in: ws))
+        await model.createBranch("feature")
+        #expect(model.workspace !== ws)
+        open.yield()
+        #expect(await work.value == false)
+        #expect(ws.nodes["a"]?.header.image == nil && model.workspace?.nodes["a"]?.header.image == nil)
+        #expect(model.errorMessage?.hasPrefix("The picture was not added") == true)
+        #expect(model.headerImageImport == nil)
+    }
+
+    @Test func aPictureForADeletedNodeSaysSo() async throws {
+        let (model, ws, open, _) = try await gatedModel()
+        let work = try #require(model.importHeaderImage(slug: "a", from: Self.url.absoluteString, makeThumbnail: true, in: ws))
+        try ws.deleteNode("a")
+        open.yield()
+        #expect(await work.value == false)
+        #expect(ws.state.pendingAssets == nil && model.errorMessage?.contains("deleted") == true)
     }
 }

@@ -28,6 +28,11 @@ final class AppModel {
     private(set) var workspace: SiteWorkspace? {
         didSet {
             guard workspace !== oldValue else { return }
+            // A picture on its way belongs to the copy just left (which must not write its stale state over the new one).
+            if headerImageImport?.cancelled == false {
+                cancelHeaderImage()
+                errorMessage = HeaderImageError.branchChanged.localizedDescription
+            }
             // Cursor moves not written yet; dropped for a copy that was just removed (moved edits, published branch).
             if let old = oldValue {
                 if old.store.branchState(named: old.branch) != nil { try? old.flushEditorStates() } else { old.cancelPendingStateWrites() }
@@ -106,37 +111,125 @@ final class AppModel {
     var repo: RepoRef? { RepoRef(repoString) }
     var client: GitHubClient? { repo.flatMap { r in tokens.load().map { GitHubClient(repo: r, token: $0, transport: transport) } } }
 
-    /// Makes a node's banner and thumbnail from picture bytes (pasted or downloaded). Works offline: the images are
-    /// kept on the device and go up with the node's next commit. Returns false, with `errorMessage` set, if the bytes
-    /// are not an image.
+    // MARK: Header images
+
+    /// The header picture being added: read from a drop or the clipboard, or downloaded. One at a time, since a later
+    /// one would be replaced when an earlier one lands. Kept here, not in the Media tab's view, so leaving the tab does
+    /// not forget it while it is still on its way.
+    struct HeaderImageImport: Equatable {
+        /// The workspace and node it is for.
+        var workspace: ObjectIdentifier
+        var slug: String
+        /// From a typed address, rather than a drop or paste: only that control shows progress.
+        var fromAddress: Bool
+        /// Cancel was asked for; it ends when a picture being resized is done.
+        var cancelled = false
+
+        func isFor(_ slug: String, in ws: SiteWorkspace) -> Bool { self.slug == slug && workspace == ObjectIdentifier(ws) }
+    }
+
+    private(set) var headerImageImport: HeaderImageImport?
+    private var headerImageTask: Task<Bool, Never>?
+
+    /// A picture dropped on a node's Media tab. Its items are asked for at once, while the drop is being performed.
+    /// Nil when the drop is not taken (another picture is on its way).
     @discardableResult
-    func setHeaderImage(slug: String, from data: Data, makeThumbnail: Bool, in ws: SiteWorkspace? = nil) -> Bool {
-        guard let ws = ws ?? workspace else { return false }
-        do {
-            try ws.setHeaderImage(slug: slug, from: data, makeThumbnail: makeThumbnail)
-            return true
-        } catch {
-            errorMessage = error.localizedDescription
-            return false
+    func dropHeaderImage(_ providers: [NSItemProvider], slug: String, in ws: SiteWorkspace, makeThumbnail: Bool) -> Task<Bool, Never>? {
+        readHeaderImage(providers, slug: slug, in: ws, makeThumbnail: makeThumbnail, takingAddress: true, else: .nothingToDrop)
+    }
+
+    /// A picture pasted from the clipboard, read like a dropped one. A link on the clipboard is not downloaded.
+    @discardableResult
+    func pasteHeaderImage(_ providers: [NSItemProvider], slug: String, in ws: SiteWorkspace, makeThumbnail: Bool) -> Task<Bool, Never>? {
+        readHeaderImage(providers, slug: slug, in: ws, makeThumbnail: makeThumbnail, takingAddress: false, else: .nothingOnClipboard)
+    }
+
+    private func readHeaderImage(_ providers: [NSItemProvider], slug: String, in ws: SiteWorkspace, makeThumbnail: Bool,
+                                 takingAddress: Bool, else none: HeaderImageError) -> Task<Bool, Never>? {
+        guard !providers.isEmpty, claimHeaderImage(slug: slug, in: ws, fromAddress: false) else { return nil }
+        let pending = DroppedImage.start(providers)
+        return addHeaderImage(slug: slug, in: ws, makeThumbnail: makeThumbnail) {
+            switch try await pending.value() {
+            case let .data(data)?: return .data(data)
+            case let .address(address)? where takingAddress: return .address(ImageSource.secured(address))
+            default: throw none
+            }
         }
     }
 
     /// Copies the picture at a web address into the node's header images. Only the downloaded picture is kept, never
     /// the address. Needs a connection; the node is left alone if anything fails.
     @discardableResult
-    func importHeaderImage(slug: String, from address: String, makeThumbnail: Bool) async -> Bool {
-        guard let ws = workspace else { return false }
-        guard isOnline else {
-            errorMessage = ImageFetchError.offline.localizedDescription
+    func importHeaderImage(slug: String, from address: String, makeThumbnail: Bool, in ws: SiteWorkspace) -> Task<Bool, Never>? {
+        guard claimHeaderImage(slug: slug, in: ws, fromAddress: true) else { return nil }
+        return addHeaderImage(slug: slug, in: ws, makeThumbnail: makeThumbnail) { .address(address) }
+    }
+
+    /// Stops the picture on its way (a photo still downloading from iCloud, a slow website). The node is left alone.
+    /// Waiting (for a download, a photo from iCloud, a slow file) ends at once; a picture being resized finishes first,
+    /// so two are never resized together.
+    func cancelHeaderImage() {
+        headerImageTask?.cancel()
+        headerImageImport?.cancelled = true
+    }
+
+    private enum HeaderImageError: LocalizedError {
+        case busy, nothingToDrop, nothingOnClipboard, branchChanged, nodeGone
+
+        var errorDescription: String? {
+            switch self {
+            case .busy: "A picture is still being added. Try again when it is done, or cancel it."
+            case .nothingToDrop: "Only a picture, a picture file or a link to a picture can be dropped here."
+            case .nothingOnClipboard: "There is no picture on the clipboard that Breezy can read."
+            case .branchChanged: "The picture was not added: the branch (or repository) changed before it was ready. Add it again."
+            case .nodeGone: "The node was deleted before its picture was ready."
+            }
+        }
+    }
+
+    private func claimHeaderImage(slug: String, in ws: SiteWorkspace, fromAddress: Bool) -> Bool {
+        guard ws === workspace else { return false } // a view still showing the copy just left
+        guard headerImageImport == nil else {
+            errorMessage = HeaderImageError.busy.localizedDescription
             return false
         }
-        do {
-            let data = try await imageFetcher.fetch(try ImageSource.url(from: address))
-            return setHeaderImage(slug: slug, from: data, makeThumbnail: makeThumbnail, in: ws)
-        } catch {
-            errorMessage = error.localizedDescription
-            return false
+        headerImageImport = HeaderImageImport(workspace: ObjectIdentifier(ws), slug: slug, fromAddress: fromAddress)
+        return true
+    }
+
+    /// Reads (or downloads) the picture, makes the banner and thumbnail off the main actor, and gives them to the node,
+    /// if it and its branch are still there: a branch switched meanwhile has a new workspace, and the old one must not
+    /// write its stale state over it. Works offline for bytes. The returned work's value says if it succeeded.
+    private func addHeaderImage(slug: String, in ws: SiteWorkspace, makeThumbnail: Bool,
+                                _ load: @escaping @MainActor () async throws -> DroppedImage) -> Task<Bool, Never> {
+        let task = Task { [imageFetcher] in
+            defer {
+                headerImageImport = nil
+                headerImageTask = nil
+            }
+            do {
+                let data: Data
+                switch try await load() {
+                case let .data(bytes): data = bytes
+                case let .address(address):
+                    guard isOnline else { throw ImageFetchError.offline }
+                    data = try await imageFetcher.fetch(try ImageSource.url(from: address))
+                }
+                try Task.checkCancellation()
+                let pictures = try await Task.detached(priority: .userInitiated) {
+                    try HeaderPictures(from: data, makeThumbnail: makeThumbnail)
+                }.value
+                try Task.checkCancellation() // also when the branch changed: see `workspace`
+                guard ws.nodes[slug] != nil else { throw HeaderImageError.nodeGone }
+                try ws.setHeaderImage(slug: slug, pictures: pictures)
+                return true
+            } catch {
+                if !Task.isCancelled { errorMessage = error.localizedDescription }
+                return false
+            }
         }
+        headerImageTask = task
+        return task
     }
 
     /// Files an issue in Breezy's own repository with the saved token. Returns the new issue, or nil with `errorMessage` set.

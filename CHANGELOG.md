@@ -4,6 +4,13 @@ All notable changes to Breezy are documented here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-12
+
+### Added
+
+- **Drop a picture for a header image** (Media tab), on the Mac, iPad and iPhone: drag a picture from Finder, Files, Photos or another app, or a picture or link from a web page, onto "Drop a picture here" (or onto the banner to replace it). It is sized and saved like a pasted one. A dropped picture works offline; a dropped link is downloaded and needs a connection (an http link is tried as https). Pictures over 100 MB are turned away.
+- **Cancel a picture on its way:** while a dropped, pasted or downloaded picture is being added, Cancel stops it (a photo still coming from iCloud, a slow website). One picture is added at a time; switching branch stops it and says so.
+
 ## [1.1.0] - 2026-11-09
 
 ### Added
@@ -65,6 +72,7 @@ First release. Breezy edits the content of the taun.org Eleventy site (`taun/tau
 - **Picks up where you left off:** relaunching restores the branch, the selected node, the screen that was showing, open sheets, drafts, search and filter, and the cursor, even after the app was swiped away.
 - **Sync status** in the toolbar: synced, offline, commits waiting to push, conflicts, failed, or no token.
 
-[Unreleased]: https://github.com/taun/breezy/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/taun/breezy/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/taun/breezy/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/taun/breezy/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/taun/breezy/releases/tag/v1.0.0

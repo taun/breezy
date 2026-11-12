@@ -27,6 +27,11 @@ public enum ImageSource {
     /// The most bytes taken from a web address.
     public static let maxBytes = 25_000_000
 
+    /// A dragged link, which cannot be edited before it is fetched: an http one is tried as https.
+    public static func secured(_ link: String) -> String {
+        link.replacingOccurrences(of: "^http://", with: "https://", options: [.regularExpression, .caseInsensitive])
+    }
+
     /// The address typed or pasted, with https:// added when there is no scheme. Only https is accepted.
     public static func url(from text: String) throws -> URL {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)

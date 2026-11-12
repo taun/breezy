@@ -350,6 +350,8 @@ func testImage(width: Int, height: Int, alpha: UInt8 = 255, type: UTType = .png)
         #expect(try ImageSource.url(from: " example.com/a.png ").absoluteString == "https://example.com/a.png")
         #expect(try ImageSource.url(from: "https://example.com/a b".replacingOccurrences(of: " ", with: "%20")).host == "example.com")
         #expect(throws: ImageFetchError.insecure) { try ImageSource.url(from: "http://example.com/a.png") }
+        #expect(ImageSource.secured("HTTP://example.com/a.png") == "https://example.com/a.png")
+        #expect(ImageSource.secured("https://example.com/http://a.png") == "https://example.com/http://a.png")
         #expect(throws: ImageFetchError.insecure) { try ImageSource.url(from: "file:///etc/hosts") }
         #expect(throws: ImageFetchError.invalidURL) { try ImageSource.url(from: "") }
         #expect(throws: ImageFetchError.invalidURL) { try ImageSource.url(from: "not a url") }

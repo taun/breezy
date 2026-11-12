@@ -636,9 +636,14 @@ public final class SiteWorkspace {
     /// the site's boxes, kept as new assets named after the node, and written into its `header`. Without a thumbnail
     /// the node's existing one stays. Nothing changes if the bytes are not an image. Works offline.
     public func setHeaderImage(slug: String, from data: Data, makeThumbnail: Bool = true) throws {
+        guard nodes[slug] != nil else { return }
+        try setHeaderImage(slug: slug, pictures: HeaderPictures(from: data, makeThumbnail: makeThumbnail))
+    }
+
+    /// `setHeaderImage(slug:from:makeThumbnail:)` with the pictures already made (off the main actor, for a large one).
+    public func setHeaderImage(slug: String, pictures: HeaderPictures) throws {
         guard var node = nodes[slug] else { return }
-        let banner = try ImageResizer.resize(data, fitting: ImageResizer.headerBox)
-        let small = makeThumbnail ? try ImageResizer.resize(data, fitting: ImageResizer.teaserBox) : nil
+        let banner = pictures.banner, small = pictures.thumbnail
         let image = HeaderImages.sitePath(slug: slug, teaser: false, fileExtension: banner.fileExtension)
         let teaser = small.map { HeaderImages.sitePath(slug: slug, teaser: true, fileExtension: $0.fileExtension) } ?? node.header.teaser
         // The header first: one Breezy cannot rewrite throws before any picture is kept.

@@ -95,6 +95,19 @@ public enum ImageResizer {
     }
 }
 
+/// A node's banner and, optionally, thumbnail made from one picture. Takes a while for a large picture, so it can be
+/// made off the main actor and handed to `SiteWorkspace.setHeaderImage(slug:pictures:)`.
+public struct HeaderPictures: Equatable, Sendable {
+    public var banner: ProcessedImage
+    public var thumbnail: ProcessedImage?
+
+    public init(from data: Data, makeThumbnail: Bool) throws {
+        banner = try ImageResizer.resize(data, fitting: ImageResizer.headerBox)
+        // From the original, not the banner: the banner is already a JPEG, and a second pass would show on the site.
+        thumbnail = makeThumbnail ? try ImageResizer.resize(data, fitting: ImageResizer.teaserBox) : nil
+    }
+}
+
 /// The banner and thumbnail files made for a node from one picture.
 public enum HeaderImages {
     /// `/assets/images/<slug>-header.jpg` and `-teaser`: named after the node, so replacing a picture replaces the file.
