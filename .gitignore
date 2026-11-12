@@ -4,3 +4,12 @@
 *.xcodeproj/xcuserdata/
 DerivedData/
 Breezy.xcodeproj/
+# Apple's Xcode skills have no license to redistribute; re-export them locally (.claude/skills/README.md).
+.claude/skills/swiftui-specialist/
+.claude/skills/swiftui-whats-new-27/
+.claude/skills/app-intents-specialist/
+.claude/skills/app-intents-whats-new-27/
+.claude/skills/app-resizability/
+.claude/skills/modernize-tests/
+.claude/skills/xctrace/
+.claude/skills/audit-xcode-security-settings/
