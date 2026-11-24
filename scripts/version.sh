@@ -8,7 +8,7 @@
 #                               when the build changed but the version was not raised, or the version went down.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-# Everything a TestFlight build is made from. testflight.yml's push paths list the same (YAML cannot share it).
+# Everything a TestFlight build is made from. testflight.yml runs on every push to main and its version job decides from these.
 BUILD_INPUTS=(App Packages project.yml scripts/testflight.sh)
 
 version_of() { sed -n 's/^ *MARKETING_VERSION: *"\(.*\)"/\1/p' | head -1; }

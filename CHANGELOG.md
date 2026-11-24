@@ -4,6 +4,12 @@ All notable changes to Breezy are documented here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-24
+
+### Added
+
+- **A Mac app on TestFlight:** TestFlight now gets the native Mac build next to the iOS one. Until now a Mac ran the iPad app, whose body editor put the cursor a few characters right of a click and whose large title moved with the text while the controls stayed put. The Mac app has the node's title in the window's toolbar, the Mac text editor, and the toolbar controls.
+
 ## [1.2.0] - 2026-11-12
 
 ### Added
@@ -72,7 +78,8 @@ First release. Breezy edits the content of the taun.org Eleventy site (`taun/tau
 - **Picks up where you left off:** relaunching restores the branch, the selected node, the screen that was showing, open sheets, drafts, search and filter, and the cursor, even after the app was swiped away.
 - **Sync status** in the toolbar: synced, offline, commits waiting to push, conflicts, failed, or no token.
 
-[Unreleased]: https://github.com/taun/breezy/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/taun/breezy/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/taun/breezy/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/taun/breezy/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/taun/breezy/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/taun/breezy/releases/tag/v1.0.0

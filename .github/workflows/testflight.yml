@@ -1,6 +1,6 @@
 name: TestFlight
 
-# Uploads a TestFlight build of the iOS app whenever main has a new version (scripts/version.sh), after the tests pass. Also run by hand
+# Uploads TestFlight builds of the iOS and Mac apps whenever main has a new version (scripts/version.sh), after the tests pass. Also run by hand
 # (Actions › TestFlight › Run workflow) and by the Execute workflow. Needs the secrets ASC_KEY_ID, ASC_ISSUER_ID and
 # ASC_KEY_P8; without them the upload is skipped with a notice.
 on:
@@ -12,6 +12,11 @@ on:
         description: Upload again even if this version is already on TestFlight
         type: boolean
         default: false
+      platforms:
+        description: Platforms to upload (a run that uploads only one does not tag the version)
+        type: choice
+        options: ["iOS macOS", "macOS", "iOS"]
+        default: "iOS macOS"
   workflow_call:
     inputs:
       ref:
@@ -23,6 +28,8 @@ on:
     outputs:
       build:
         value: ${{ jobs.upload.outputs.build }}
+      complete: # 'true' when both platforms were uploaded
+        value: ${{ jobs.upload.outputs.complete }}
 
 permissions:
   contents: read
@@ -62,9 +69,10 @@ jobs:
       (needs.version.outputs.status == 'new' || inputs.force) &&
       (needs.test.result == 'success' || needs.test.result == 'skipped') }}
     runs-on: macos-26
-    timeout-minutes: 45
+    timeout-minutes: 60 # two archives and two uploads (iOS and macOS)
     outputs:
       build: ${{ steps.upload.outputs.build }}
+      complete: ${{ steps.upload.outputs.complete }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -77,6 +85,7 @@ jobs:
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
           FORCE: ${{ inputs.force && '1' || '' }}
+          PLATFORMS: ${{ inputs.platforms || '' }} # empty (pushes, Execute): both
           TAG: "0" # the tag job does it, so this job, which builds third-party packages, keeps a read-only token
         run: |
           if [ -z "$ASC_KEY_ID" ]; then
@@ -89,7 +98,7 @@ jobs:
   # raise it. Builds of main only (pushes, and the Execute workflow); a hand run on another branch is a trial.
   tag:
     needs: [version, upload]
-    if: ${{ needs.upload.outputs.build != '' && needs.version.outputs.status == 'new' && github.ref == 'refs/heads/main' }}
+    if: ${{ needs.upload.outputs.complete == 'true' && needs.version.outputs.status == 'new' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
