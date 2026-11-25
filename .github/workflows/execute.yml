@@ -21,7 +21,7 @@ jobs:
       github.event.label.name == 'execute' &&
       github.event.sender.login == github.repository_owner &&
       github.event.issue.user.login == github.repository_owner
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7

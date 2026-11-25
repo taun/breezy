@@ -68,7 +68,7 @@ jobs:
       ${{ !cancelled() && needs.version.result == 'success' &&
       (needs.version.outputs.status == 'new' || inputs.force) &&
       (needs.test.result == 'success' || needs.test.result == 'skipped') }}
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 60 # two archives and two uploads (iOS and macOS)
     outputs:
       build: ${{ steps.upload.outputs.build }}

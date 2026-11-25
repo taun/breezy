@@ -55,7 +55,7 @@ BREEZY_FRESH=1 BREEZY_SANDBOX=1 scripts/simulator.sh "iPhone 15 Pro"
 
 ## Pipeline: issues to TestFlight
 
-GitHub Actions (macOS runners, free for this public repo) runs three workflows in `.github/workflows/`:
+GitHub Actions (macOS runners with Xcode 27, the `xcode-27` image; free for this public repo) runs three workflows in `.github/workflows/`:
 
 - **Test:** every branch and pull request: the BreezyKit and app tests, and an iOS build.
 - **TestFlight:** on every push to `main`, checks the version (see Releasing) and, when it is new, tests, archives the iOS and Mac apps and uploads both to TestFlight (the Mac gets the native Mac app, not the iPad one). The build number is the UTC time (`YYYYMMDDHHMM`). It can also be run by hand (Actions › TestFlight › Run workflow), and `scripts/testflight.sh` does the same locally with `ASC_KEY_PATH` pointing at the `.p8` file.

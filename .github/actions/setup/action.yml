@@ -1,5 +1,7 @@
 name: Set up Breezy
-description: Clones the site repo next to Breezy, where the fixture tests and CLAUDE.md expect it, and installs XcodeGen.
+description: >-
+  Selects the newest Xcode 27 on the runner (the image's default can be an older minor), clones the site repo next to
+  Breezy, where the fixture tests and CLAUDE.md expect it, and installs XcodeGen.
 runs:
   using: composite
   steps:
@@ -7,6 +9,8 @@ runs:
       env:
         HOMEBREW_NO_AUTO_UPDATE: "1"
       run: |
+        xcode=$(ls -d /Applications/Xcode_27.*.app | sort -V | tail -n 1)
+        sudo xcode-select --switch "$xcode"
         git clone --quiet --depth 1 https://github.com/taun/taun.github.io.git "$GITHUB_WORKSPACE/../taun.github.io"
         brew install --quiet xcodegen
         xcodebuild -version
