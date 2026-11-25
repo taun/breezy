@@ -5,6 +5,8 @@ import SwiftUI
 /// has edits or commits on it. Nothing is lost; this asks where they should go.
 struct BranchDeletedView: View {
     @Environment(AppModel.self) private var model
+    /// Work started here reports to this window (AppModel.windowUsed).
+    @Environment(\.window) private var window
     @Environment(\.dismiss) private var dismiss
     @AppStorage("branchDeleted.newName") private var newName = ""
 
@@ -22,7 +24,7 @@ struct BranchDeletedView: View {
             }
             Section {
                 Button {
-                    Task { await model.recreateBranchOnGitHub() }
+                    Task { model.windowUsed(window?.id); await model.recreateBranchOnGitHub() }
                 } label: {
                     Label("Recreate “\(branch)” on GitHub", systemImage: "arrow.uturn.backward.circle")
                 }
@@ -39,7 +41,7 @@ struct BranchDeletedView: View {
                     #endif
                 Button {
                     let name = newName
-                    Task { await model.moveEditsToNewBranch(name); newName = "" }
+                    Task { model.windowUsed(window?.id); await model.moveEditsToNewBranch(name); newName = "" }
                 } label: {
                     Label("Move Changes to a New Branch from \(model.defaultBranch)", systemImage: "arrow.triangle.branch")
                 }

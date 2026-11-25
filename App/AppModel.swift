@@ -37,7 +37,10 @@ final class AppModel {
             if let old = oldValue {
                 if old.store.branchState(named: old.branch) != nil { try? old.flushEditorStates() } else { old.cancelPendingStateWrites() }
             }
-            if let workspace { importLegacyEditorState(workspace) }
+            if let workspace {
+                importLegacyEditorState(workspace)
+                applyPendingSelections(branch: workspace.branch)
+            }
         }
     }
     private(set) var pullRequests: [PullRequest] = []
@@ -65,12 +68,19 @@ final class AppModel {
     /// The last sync failure that was not simply "offline".
     private(set) var lastSyncError: String?
 
-    var errorMessage: String?
-    var showConflicts = false
+    /// Set by the model: shown in the front window. A view reporting an error of its own uses `report(_:in:)`.
+    var errorMessage: String? {
+        didSet {
+            // Each message goes to the front window, even with an older one (or the same text) up elsewhere.
+            if errorMessage != nil { presentedIn[.error] = windows.front } else { presentedIn[.error] = nil }
+        }
+    }
+    var showConflicts = false { didSet { presenting(.conflicts, showConflicts, was: oldValue) } }
     /// Shown when the current branch is gone from GitHub but this device still has local changes on it.
-    var showBranchDeleted = false
-    /// Set to ask the window to open Settings (e.g. from the sync status when there is no token).
-    var wantsSettings = false
+    var showBranchDeleted = false { didSet { presenting(.branchDeleted, showBranchDeleted, was: oldValue) } }
+    /// The window asked to open Settings (the sync status when there is no token); the front one does if that one
+    /// is not on screen.
+    var wantsSettings: String?
 
     enum DeployStatus: Equatable {
         case none, waiting, running, live, failed(URL?), unknown
@@ -462,7 +472,7 @@ final class AppModel {
     /// Creates the branch on GitHub again at the commit this copy is based on, then pushes its commits.
     func recreateBranchOnGitHub() async {
         guard let ws = workspace else { return }
-        attempt { try ws.recreateOnGitHub() }
+        guard attempt({ try ws.recreateOnGitHub() }) else { return } // the sheet stays, with the error over it
         showBranchDeleted = false
         await sync()
     }
@@ -498,8 +508,10 @@ final class AppModel {
         errorMessage = error.localizedDescription
     }
 
-    private func attempt(_ op: () throws -> Void) {
-        do { try op() } catch { errorMessage = error.localizedDescription }
+    /// Runs `op`, showing its error. Whether it succeeded.
+    @discardableResult
+    private func attempt(_ op: () throws -> Void) -> Bool {
+        do { try op(); return true } catch { errorMessage = error.localizedDescription; return false }
     }
 
     // MARK: Branches
@@ -563,13 +575,18 @@ final class AppModel {
         await sync()
     }
 
-    func resolve(_ path: String, with resolution: ConflictResolution) async {
-        guard let ws = workspace else { return }
-        attempt { try ws.resolve(path, with: resolution) }
+    /// Whether the resolution was taken (a sync after it may find the file in conflict again). `taken` runs as soon as
+    /// it is, before that sync.
+    @discardableResult
+    func resolve(_ path: String, with resolution: ConflictResolution, taken: () -> Void = {}) async -> Bool {
+        guard let ws = workspace else { return false }
+        guard attempt({ try ws.resolve(path, with: resolution) }) else { return false }
+        taken()
         if ws.conflicts.isEmpty {
             showConflicts = false
             await sync()
         }
+        return true
     }
 
     // MARK: Pull requests (online only)
@@ -732,6 +749,250 @@ final class AppModel {
             defaults.removeObject(forKey: "editor.preview")
             defaults.removeObject(forKey: "editor.draft")
         }
+    }
+
+    // MARK: Windows (several on the Mac; see Windows.swift)
+
+    /// The open windows, the one used last in front.
+    private(set) var windows = WindowRegistry()
+
+    /// The app-wide sheets and the error alert, which show in one window.
+    enum Presentation: Hashable { case error, conflicts, branchDeleted }
+    /// The window each one went up in: the front window at the time, or the window that asked for it. It stays there
+    /// while open, so clicking another window does not move a sheet out from under the user; if that window closes or
+    /// leaves the screen, it shows in the front one.
+    private var presentedIn: [Presentation: String] = [:]
+
+    private func presenting(_ p: Presentation, _ shown: Bool, was: Bool) {
+        if shown && !was { presentedIn[p] = windows.front } else if !shown { presentedIn[p] = nil }
+    }
+
+    /// Whether `p` is shown in `window` (when it is up at all): its window while on screen, else the front one. With
+    /// none on screen it stays where it is (or goes to the window used last), so it is never up in several at once;
+    /// only before any window has come up is it in every one.
+    func shows(_ p: Presentation, in window: String) -> Bool {
+        let pinned = presentedIn[p]
+        let target = pinned.flatMap { windows.isVisible($0) ? $0 : nil } ?? windows.front ?? pinned ?? windows.open.last
+        return (target ?? window) == window
+    }
+
+    /// The one window that opens Settings for `wantsSettings`: the one that asked, or else the front one; with none
+    /// on screen, none yet (the next window to come up takes it).
+    var settingsWindow: String? {
+        guard let asker = wantsSettings else { return nil }
+        return windows.isVisible(asker) ? asker : windows.front
+    }
+
+    /// Conflicts or the deleted branch, asked for in `window` (the sync status there): shown there, even when already
+    /// up in another window.
+    func request(_ p: Presentation, in window: String?) {
+        switch p {
+        case .conflicts: showConflicts = true
+        case .branchDeleted: showBranchDeleted = true
+        case .error: return
+        }
+        if let window, windows.isVisible(window) { presentedIn[p] = window }
+    }
+
+    /// An error from something done in `window`: shown there rather than in the front window.
+    func report(_ message: String, in window: String?) {
+        errorMessage = message
+        if let window, windows.isVisible(window) { presentedIn[.error] = window }
+    }
+
+    /// Last use of each window other than the main one, so the state of windows long closed can be removed.
+    private static let windowsUsedKey = "window.lastUsed"
+    /// How long a closed window's state is kept: iPadOS may keep a window in the app switcher that long.
+    static let windowStateLifetime: TimeInterval = 30 * 24 * 3600
+
+    /// A window came up. Returns its ID: the one it kept in scene storage, or a new one for a new window or one whose
+    /// scene storage was discarded (WindowRegistry.claim). A window opened for a node shows that node, in state of its
+    /// own (never the main window's). A window restored with an ID another window on screen has gets a new ID with a
+    /// copy of that state.
+    func windowAppeared(_ id: String?, by window: UUID, showing slug: String? = nil, now: Date = .now) -> String {
+        if let id {
+            // iOS has one window: one with this ID is that window coming back. On the Mac a second window with an ID
+            // another has (a minimized one is still there) gets a copy.
+            #if os(iOS)
+            let takeOver = true
+            #else
+            let takeOver = false
+            #endif
+            if windows.appear(id, by: window, takeOver: takeOver) {
+                used(id, now)
+                return id
+            }
+            let copy = windows.copy(id, for: window)
+            copyWindowState(from: id, to: copy, modal: .none)
+            used(copy, now)
+            return copy
+        }
+        // Not while windows are still coming back at launch: one restored later (or whose ID comes late) is not open
+        // yet, and its state must not go.
+        if now.timeIntervalSince(launched) > 60 { pruneWindows(now: now) }
+        let id = windows.claim(by: window, main: slug == nil)
+        used(id, now)
+        // The main window's state as it was: given back as it was if this window's own ID arrives late (it may
+        // have written under the main window's keys meanwhile).
+        if id == "" { mainStateAtClaim = WindowKeys.perWindow.reduce(into: [:]) { $0[$1] = defaults.object(forKey: $1) } }
+        if let slug {
+            // The branch is known once the workspace is open (a window restored at launch comes up before).
+            if let workspace { select(slug, in: id, branch: workspace.branch) } else { pendingSelections[id] = slug }
+        }
+        return id
+    }
+
+    /// A window's scene storage arrived after it came up (a Mac window restored minimized), so it was given `given`
+    /// as a new window and now has its own ID: it gives `given` back and takes `restored`. A window that got a copy
+    /// of `given` meanwhile, because this one had it, takes `given` back, with the state it has now. Returns the ID.
+    func windowRestoredLate(given: String, restored: String, by window: UUID, now: Date = .now) -> String {
+        let wasHidden = windows.open.contains(given) && !windows.isVisible(given) // restored minimized, say
+        // What is up in it, or asked for from it, goes with it to its own ID.
+        let pinned = presentedIn.filter { $0.value == given }.map(\.key)
+        let askedSettings = wantsSettings == given
+        let copied = windows.copy(of: given) // before closing it, which forgets copies of it
+        windows.close(given)
+        pendingSelections[given] = nil
+        // The main window's keys back as they were, unless the window with a copy of them takes them back below.
+        if given == "", let saved = mainStateAtClaim, copied == nil {
+            for key in WindowKeys.perWindow { defaults.set(saved[key] ?? nil, forKey: key) }
+        }
+        mainStateAtClaim = nil
+        if let (copy, other) = copied {
+            // Its state now; what is up in it (a sheet, the focus) only if opened on the copy (it started without).
+            copyWindowState(from: copy, to: given, modal: .ifSet)
+            windows.move(other, from: copy, to: given)
+            // What is up in it goes with it.
+            for (p, w) in presentedIn where w == copy { presentedIn[p] = given }
+            if wantsSettings == copy { wantsSettings = given }
+        }
+        let id = windowAppeared(restored, by: window, now: now)
+        if wasHidden { windows.hide(id) }
+        for p in pinned { presentedIn[p] = id }
+        if askedSettings { wantsSettings = id }
+        return id
+    }
+
+    /// The window moved (WindowRegistry.moved) has taken its new ID.
+    func windowMoveDone(_ window: UUID) {
+        windows.moveDone(window)
+    }
+
+    /// When this run started, to leave windows coming back at launch alone (pruneWindows).
+    private let launched = Date.now
+
+    /// The main window's keys when a window without an ID was given it (windowRestoredLate).
+    private var mainStateAtClaim: [String: Any]?
+
+    /// Windows opened for a node before the workspace was open: window → node.
+    private var pendingSelections: [String: String] = [:]
+
+    private func applyPendingSelections(branch: String) {
+        for (id, slug) in pendingSelections { select(slug, in: id, branch: branch) }
+        pendingSelections = [:]
+    }
+
+    private func select(_ slug: String, in id: String, branch: String) {
+        let key = WindowKeys(id: id)(WindowKeys.selection)
+        var map = SelectionByBranch.decode(defaults.string(forKey: key) ?? "{}")
+        map[branch] = slug
+        defaults.set(SelectionByBranch.encode(map), forKey: key)
+        // A narrow window (Slide Over, a narrow Split View) opens on the node, not the list.
+        defaults.set(CompactNavigation.raw(.detail), forKey: WindowKeys(id: id)(WindowKeys.compactColumn))
+    }
+
+    /// What up in a window (a sheet, a delete to confirm, the focus) a copy of its state takes: none (that belongs to
+    /// the window it was up in, not a second one alongside), or what is set (a window moving back from a copy).
+    private enum ModalCopy { case none, ifSet }
+
+    private func copyWindowState(from id: String, to copy: String, modal: ModalCopy) {
+        let modalKeys: Set = [WindowKeys.sheet, WindowKeys.showNew, WindowKeys.pendingDelete, WindowKeys.focus]
+        for key in WindowKeys.perWindow {
+            let value = defaults.object(forKey: WindowKeys(id: id)(key))
+            if modalKeys.contains(key) {
+                if modal == .ifSet, let value, (value as? String) != "", (value as? Bool) != false {
+                    defaults.set(value, forKey: WindowKeys(id: copy)(key))
+                }
+            } else {
+                defaults.set(value, forKey: WindowKeys(id: copy)(key)) // nil removes: exactly that state
+            }
+        }
+    }
+
+    /// The window became the one the user is in: key on the Mac, new on either. Only its WindowRoot calls this.
+    func windowActivated(_ id: String, now: Date = .now) {
+        // Only an open window: a late callback for one already closed must not bring it back.
+        guard windows.open.contains(id) else { return }
+        // Up while no window was on screen, or tied to one no longer on screen (minimized, closed): it stays in this
+        // one from now on, also when this one is already in front (a new window is put there as it comes up).
+        let up: [Presentation: Bool] = [.error: errorMessage != nil, .conflicts: showConflicts, .branchDeleted: showBranchDeleted]
+        for (p, isUp) in up where isUp {
+            if let w = presentedIn[p], windows.isVisible(w) || w == id { continue }
+            presentedIn[p] = id
+        }
+        // Already in front: nothing changes (each window redraws when `windows` does).
+        guard windows.front != id else { return } // the front window is always on screen
+        windows.activate(id)
+        used(id, now)
+    }
+
+    /// The user did something in the window (chose a node, opened a sheet, started work from a sheet): it comes to
+    /// the front. On iPad, where windows side by side are all active, this is what says which one the user is in.
+    func windowUsed(_ id: String?, now: Date = .now) {
+        // On screen only: a call that comes after the window left (an onDisappear, a task) must not bring it back.
+        guard let id, windows.isVisible(id) else { return }
+        windowActivated(id, now: now)
+    }
+
+    /// The window left the screen (minimized) and may come back with its ID; what is up in it goes to the front window.
+    func windowHidden(_ id: String) {
+        guard windows.isVisible(id) else { return } // already: no change to observe
+        windows.hide(id)
+        handOff(from: id)
+    }
+
+    /// The window's views are gone (closed, or an iPad scene disconnected): hidden, and its scene coming back with the
+    /// ID takes it.
+    func windowGone(_ id: String, by window: UUID) {
+        // Not for an ID another window has taken over meanwhile (a reconnected scene).
+        guard windows.owner(of: id) == window else { return }
+        windows.release(id, by: window)
+        handOff(from: id)
+    }
+
+    /// The window closed for good (the Mac): its ID is free for the next window without one.
+    func windowClosed(_ id: String) {
+        windows.close(id)
+        pendingSelections[id] = nil
+        handOff(from: id)
+    }
+
+    /// What is up in a window leaving the screen goes to the front window, and stays there when the first comes back
+    /// (no sheet closing under the user). With no window on screen it stays where it is.
+    private func handOff(from id: String) {
+        guard let front = windows.front, front != id else { return }
+        for (p, w) in presentedIn where w == id { presentedIn[p] = front }
+    }
+
+    private func used(_ id: String, _ now: Date) {
+        guard !id.isEmpty else { return } // the main window's state is kept for good
+        var used = defaults.dictionary(forKey: Self.windowsUsedKey) as? [String: Double] ?? [:]
+        // Within the hour is close enough for keeping state 30 days, and saves a write per click.
+        if let last = used[id], now.timeIntervalSince1970 - last < 3600 { return }
+        used[id] = now.timeIntervalSince1970
+        defaults.set(used, forKey: Self.windowsUsedKey)
+    }
+
+    /// Removes the state of windows not open (in this run) and not used for `windowStateLifetime`.
+    func pruneWindows(now: Date = .now) {
+        var used = defaults.dictionary(forKey: Self.windowsUsedKey) as? [String: Double] ?? [:]
+        let old = used.filter { id, time in !windows.open.contains(id) && now.timeIntervalSince1970 - time > Self.windowStateLifetime }
+        guard !old.isEmpty else { return }
+        for id in old.keys {
+            for key in WindowKeys.perWindow { defaults.removeObject(forKey: WindowKeys(id: id)(key)) }
+            used[id] = nil
+        }
+        defaults.set(used, forKey: Self.windowsUsedKey)
     }
 
     // MARK: Local files

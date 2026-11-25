@@ -3,6 +3,8 @@ import SwiftUI
 
 struct CommitView: View {
     @Environment(AppModel.self) private var model
+    /// Errors from here show in this window.
+    @Environment(\.window) private var window
     @Environment(\.dismiss) private var dismiss
     @AppStorage("commit.message") private var message = ""
 
@@ -51,14 +53,20 @@ struct CommitView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Commit") {
                         Task {
+                            model.windowUsed(window?.id)
                             await model.commit(message: message)
-                            if !(model.workspace?.hasChanges ?? true) { message = ""; dismiss() }
+                            // Closed by onChange(of: hasChanges) as the commit is queued, while this is still the
+                            // window's sheet: by now (after the sync) another may have taken its place.
                         }
                     }
-                    .disabled(message.trimmingCharacters(in: .whitespaces).isEmpty)
+                    // Nothing to commit (all committed meanwhile, say in another window): nothing to do here.
+                    .disabled(message.trimmingCharacters(in: .whitespaces).isEmpty || !ws.hasChanges)
                 }
             }
-            .onChange(of: ws.hasChanges) { _, has in if !has { message = ""; dismiss() } }
+            // All committed: done. Another branch opened (in another window): closed, the message kept for later.
+            .onChange(of: CommitTarget(branch: ws.branch, hasChanges: ws.hasChanges)) { old, new in
+                if new.branch != old.branch { dismiss() } else if !new.hasChanges { message = ""; dismiss() }
+            }
             .onAppear {
                 if message.isEmpty { message = ws.suggestedCommitMessage }
             }
@@ -66,12 +74,12 @@ struct CommitView: View {
     }
 
     private func revert(_ slug: String, in ws: SiteWorkspace) {
-        do { try ws.revert(slug) } catch { model.errorMessage = error.localizedDescription }
+        do { try ws.revert(slug) } catch { model.report(error.localizedDescription, in: window?.id) }
         message = ws.suggestedCommitMessage
     }
 
     private func revertDraft(_ slug: String, in ws: SiteWorkspace) {
-        do { try ws.revertDraft(slug) } catch { model.errorMessage = error.localizedDescription }
+        do { try ws.revertDraft(slug) } catch { model.report(error.localizedDescription, in: window?.id) }
         message = ws.suggestedCommitMessage
     }
 
@@ -91,4 +99,11 @@ struct CommitView: View {
         }
         return [file, draft].compactMap { $0 }.joined(separator: " · ")
     }
+}
+
+/// The branch being committed to and whether it has changes, watched together so a branch switch is not taken for
+/// a finished commit.
+struct CommitTarget: Equatable {
+    let branch: String
+    let hasChanges: Bool
 }

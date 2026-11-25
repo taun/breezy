@@ -15,14 +15,16 @@ struct DraftView: View {
     let use: (String) -> Void
     /// The text being edited; a local copy for the same reason as BodyEditor's (the cursor would reset while typing).
     @State private var draft: String
-    @AppStorage("editor.draftPage") private var pageRaw = Page.draft.rawValue
+    /// The page showing on iPhone, kept per window.
+    @AppStorage private var pageRaw: String
     private let saved: String
 
     enum Page: String { case original, draft }
 
-    init(draft: String, original: String, compact: Bool, isStale: Bool, setDraft: @escaping (String) -> Void,
-         markSeen: @escaping () -> Void, use: @escaping (String) -> Void) {
+    init(draft: String, original: String, compact: Bool, isStale: Bool, window: WindowKeys,
+         setDraft: @escaping (String) -> Void, markSeen: @escaping () -> Void, use: @escaping (String) -> Void) {
         saved = draft
+        _pageRaw = AppStorage(wrappedValue: Page.draft.rawValue, window(WindowKeys.draftPage))
         self.original = original
         self.compact = compact
         self.isStale = isStale

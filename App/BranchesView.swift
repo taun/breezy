@@ -4,6 +4,8 @@ import SwiftUI
 /// Switch, create and delete branches; open and merge pull requests into the default branch.
 struct BranchesView: View {
     @Environment(AppModel.self) private var model
+    /// Work started here reports to this window (AppModel.windowUsed).
+    @Environment(\.window) private var window
     @Environment(\.dismiss) private var dismiss
     @AppStorage("branches.new") private var newBranch = ""
     @AppStorage("branches.prTitle") private var prTitle = ""
@@ -20,13 +22,13 @@ struct BranchesView: View {
                     if let at = ws.state.fetchedAt { LabeledContent("Last synced", value: at.formatted(date: .abbreviated, time: .shortened)) }
                     if !ws.queue.isEmpty { LabeledContent("Commits waiting to push", value: "\(ws.queue.count)") }
                     if !ws.state.existsOnRemote { Text("Created on this device; it is created on GitHub at the next sync.").font(.caption).foregroundStyle(.secondary) }
-                    Button("Sync Now") { Task { await model.sync() } }.disabled(!model.isOnline)
+                    Button("Sync Now") { Task { model.windowUsed(window?.id); await model.sync() } }.disabled(!model.isOnline)
                 }
                 Section {
                     ForEach(model.branchNames, id: \.self) { name in
                         let onDevice = model.isOnDevice(name)
                         Button {
-                            Task { await model.switchBranch(name) }
+                            Task { model.windowUsed(window?.id); await model.switchBranch(name) }
                         } label: {
                             HStack {
                                 Text(name)
@@ -40,12 +42,12 @@ struct BranchesView: View {
                         .disabled(name == ws.branch || (!onDevice && !model.isOnline))
                         .swipeActions {
                             if name != ws.branch && name != model.defaultBranch {
-                                Button("Delete", role: .destructive) { Task { await model.deleteBranch(name) } }
+                                Button("Delete", role: .destructive) { Task { model.windowUsed(window?.id); await model.deleteBranch(name) } }
                             }
                         }
                         .contextMenu {
                             if name != ws.branch && name != model.defaultBranch {
-                                Button("Delete Branch", role: .destructive) { Task { await model.deleteBranch(name) } }
+                                Button("Delete Branch", role: .destructive) { Task { model.windowUsed(window?.id); await model.deleteBranch(name) } }
                             }
                         }
                     }
@@ -57,7 +59,7 @@ struct BranchesView: View {
                             #endif
                         Button("Create") {
                             let name = newBranch.trimmingCharacters(in: .whitespaces)
-                            Task { await model.createBranch(name); newBranch = "" }
+                            Task { model.windowUsed(window?.id); await model.createBranch(name); newBranch = "" }
                         }
                         .disabled(!Self.isValidBranchName(newBranch) || model.branchNames.contains(newBranch) || !ws.queue.isEmpty)
                     }
@@ -83,7 +85,7 @@ struct BranchesView: View {
                     Section("Open a pull request: \(ws.branch) → \(model.defaultBranch)") {
                         TextField("Title", text: $prTitle)
                         TextField("Description (optional)", text: $prBody, axis: .vertical)
-                        Button("Open pull request") { Task { await model.openPullRequest(title: prTitle, body: prBody); prTitle = ""; prBody = "" } }
+                        Button("Open pull request") { Task { model.windowUsed(window?.id); await model.openPullRequest(title: prTitle, body: prBody); prTitle = ""; prBody = "" } }
                             .disabled(prTitle.trimmingCharacters(in: .whitespaces).isEmpty || ws.hasChanges)
                         if ws.hasChanges { Text("Commit your changes first.").font(.caption).foregroundStyle(.secondary) }
                     }
@@ -94,7 +96,7 @@ struct BranchesView: View {
         .navigationTitle("Branches")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
-            ToolbarItem { Button { Task { await model.sync() } } label: { Label("Sync", systemImage: "arrow.clockwise") }.disabled(!model.isOnline) }
+            ToolbarItem { Button { Task { model.windowUsed(window?.id); await model.sync() } } label: { Label("Sync", systemImage: "arrow.clockwise") }.disabled(!model.isOnline) }
         }
     }
 
@@ -107,6 +109,8 @@ struct BranchesView: View {
 
 struct PullRequestRow: View {
     @Environment(AppModel.self) private var model
+    /// Work started here reports to this window (AppModel.windowUsed).
+    @Environment(\.window) private var window
     let pr: PullRequest
     let method: MergeMethod
     let deleteBranch: Bool
@@ -133,13 +137,13 @@ struct PullRequestRow: View {
             HStack {
                 Text(status.0).font(.caption).foregroundStyle(status.1)
                 Spacer()
-                Button("Check") { Task { await model.refreshPullRequest(pr.number) } }.buttonStyle(.borderless)
+                Button("Check") { Task { model.windowUsed(window?.id); await model.refreshPullRequest(pr.number) } }.buttonStyle(.borderless)
                 Button("Merge") { confirmMerge = true }.buttonStyle(.borderless).disabled(pr.mergeable == false)
             }
         }
         .task { if pr.mergeable == nil { await model.refreshPullRequest(pr.number) } }
         .confirmationDialog("\(method.rawValue.capitalized) #\(pr.number) into \(pr.base)?", isPresented: $confirmMerge) {
-            Button("Merge") { Task { await model.merge(pr, method: method, deleteBranch: deleteBranch) } }
+            Button("Merge") { Task { model.windowUsed(window?.id); await model.merge(pr, method: method, deleteBranch: deleteBranch) } }
         } message: {
             Text(pr.base == model.defaultBranch ? "Merging into \(pr.base) publishes the site." : "")
         }

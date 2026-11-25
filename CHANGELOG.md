@@ -4,6 +4,23 @@ All notable changes to Breezy are documented here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-24
+
+### Added
+
+- **Several windows on the Mac, each with its own node:** File › New Window, or Open in New Window when you right-click a node in the list, opens another window. Each window keeps its own node, search and filters, sidebar, and sheets such as Settings or Commit, and comes back that way after a relaunch. Until now every window showed the same node, and opening a sheet opened it in all of them. The iPad keeps one window. The windows share the branch and the edits, so typing in one window shows in another showing the same node. Conflicts, a branch deleted on GitHub and error messages appear once, in the window you were using.
+
+### Changed
+
+- The iPad opens one Breezy window. It allowed several before, but they all showed the same node; several windows, each with its own node, are now a Mac feature.
+
+### Fixed
+
+- An error from inside a sheet (New Node, Commit, Branches, Settings, filing an issue, merging a conflict) now shows over that sheet. Before, it was held back under the sheet.
+- Revert (in the editor's toolbar or a node's menu in the list) now says when it fails, instead of leaving the node changed without a word.
+- A merged version that cannot be used (Use This) keeps the merge open with your text, and recreating a deleted branch that fails keeps its sheet open; both used to close and leave only the error.
+- Conflicts or a branch deleted on GitHub, found while Commit or New Node is open, now show: that sheet steps aside and comes back as it was once they are dealt with. Over Settings, Publish or Branches they wait until it is closed.
+
 ## [1.3.0] - 2026-11-24
 
 ### Added
@@ -78,7 +95,8 @@ First release. Breezy edits the content of the taun.org Eleventy site (`taun/tau
 - **Picks up where you left off:** relaunching restores the branch, the selected node, the screen that was showing, open sheets, drafts, search and filter, and the cursor, even after the app was swiped away.
 - **Sync status** in the toolbar: synced, offline, commits waiting to push, conflicts, failed, or no token.
 
-[Unreleased]: https://github.com/taun/breezy/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/taun/breezy/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/taun/breezy/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/taun/breezy/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/taun/breezy/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/taun/breezy/compare/v1.0.0...v1.1.0

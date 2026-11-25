@@ -3,14 +3,29 @@ import SwiftUI
 
 struct RootView: View {
     @Environment(AppModel.self) private var model
+    /// The window this is; it keeps the state below for itself (Windows.swift).
+    let window: WindowKeys
     // UI state saved in the app's preferences, so a relaunch looks unchanged even after the app was swiped away or
     // stopped (iOS discards SceneStorage in those cases). Content edits are saved separately, to disk, as typed.
-    @AppStorage("root.sheet") private var sheetRaw = ""
+    @AppStorage private var sheetRaw: String
     /// Last selected node per branch, as JSON [branch: slug].
-    @AppStorage("root.selectionByBranch") private var selectionJSON = "{}"
-    @AppStorage("root.columns") private var columnsRaw = "automatic"
+    @AppStorage private var selectionJSON: String
+    @AppStorage private var columnsRaw: String
     /// iPhone (collapsed split view): whether the list or the editor was showing.
-    @AppStorage("root.compactColumn") private var compactColumnRaw = "sidebar"
+    @AppStorage private var compactColumnRaw: String
+    /// The Commit sheet's message (CommitView), cleared here when that sheet goes with nothing left to commit.
+    @AppStorage("commit.message") private var commitMessage = ""
+    /// The node list's New Node sheet is up (NodeListView), covering this view.
+    @AppStorage private var showNewRaw: Bool
+
+    init(window: WindowKeys) {
+        self.window = window
+        _sheetRaw = AppStorage(wrappedValue: "", window(WindowKeys.sheet))
+        _selectionJSON = AppStorage(wrappedValue: "{}", window(WindowKeys.selection))
+        _columnsRaw = AppStorage(wrappedValue: "automatic", window(WindowKeys.columns))
+        _compactColumnRaw = AppStorage(wrappedValue: "sidebar", window(WindowKeys.compactColumn))
+        _showNewRaw = AppStorage(wrappedValue: false, window(WindowKeys.showNew))
+    }
 
     private var compactColumn: Binding<NavigationSplitViewColumn> {
         Binding(
@@ -18,23 +33,18 @@ struct RootView: View {
             set: { compactColumnRaw = CompactNavigation.raw($0) })
     }
 
-    private var sheet: Binding<Sheet?> {
-        Binding(get: { Sheet(rawValue: sheetRaw) }, set: { sheetRaw = $0?.rawValue ?? "" })
-    }
-
     /// The selected node of the current branch; switching branches brings back that branch's selection.
     private var selection: Binding<String?> {
         Binding(
-            get: { Self.decode(selectionJSON)[model.currentBranch] },
+            get: { SelectionByBranch.decode(selectionJSON)[model.currentBranch] },
             set: { slug in
-                var map = Self.decode(selectionJSON)
+                // A node chosen: the user is in this window. (A branch switch changes the selection without coming
+                // through here; a list clearing it, when the node goes, is not the user.)
+                if slug != nil { model.windowUsed(window.id) }
+                var map = SelectionByBranch.decode(selectionJSON)
                 map[model.currentBranch] = slug
-                selectionJSON = (try? String(data: JSONEncoder().encode(map), encoding: .utf8)) ?? "{}"
+                selectionJSON = SelectionByBranch.encode(map)
             })
-    }
-
-    private static func decode(_ json: String) -> [String: String] {
-        (try? JSONDecoder().decode([String: String].self, from: Data(json.utf8))) ?? [:]
     }
 
     private var columns: Binding<NavigationSplitViewVisibility> {
@@ -62,7 +72,7 @@ struct RootView: View {
                     sidebar(ws)
                 } detail: {
                     if let slug = selection.wrappedValue, ws.nodes[slug] != nil {
-                        NodeEditorView(workspace: ws, slug: slug).id(slug)
+                        NodeEditorView(workspace: ws, slug: slug, window: window).id(slug)
                     } else if let slug = selection.wrappedValue, ws.deletedNodes[slug] != nil {
                         DeletedNodeView(workspace: ws, slug: slug).id(slug)
                     } else {
@@ -81,47 +91,143 @@ struct RootView: View {
             } else if model.isBusy {
                 FirstDownloadView()
             } else if !model.hasToken {
-                NavigationStack { SettingsView() }
+                NavigationStack { SettingsView(covered: presentedSheet != nil) }
             } else if !model.isOnline {
                 ContentUnavailableView("Not on this device yet", systemImage: "wifi.slash",
                                        description: Text("Connect to the internet once to download the site. After that Breezy works offline."))
             } else {
-                NavigationStack { SettingsView() }
+                NavigationStack { SettingsView(covered: presentedSheet != nil) }
             }
         }
-        .sheet(item: sheet) { s in
-            NavigationStack {
-                switch s {
-                case .settings: SettingsView(close: { sheetRaw = "" })
-                case .branches: BranchesView()
-                case .commit: CommitView()
-                case .publish: PublishView()
+        // One sheet per window: a window shows one at a time (a second asked for at once may never come up).
+        .sheet(item: presented) { p in
+            Group {
+                switch p {
+                case let .stored(s):
+                    NavigationStack {
+                        switch s {
+                        case .settings: SettingsView(close: { sheetRaw = "" }) // shows errors itself (it has a sheet of its own)
+                        case .branches: BranchesView().errorAlert()
+                        case .commit: CommitView().errorAlert()
+                        case .publish: PublishView().errorAlert()
+                        }
+                    }
+                    .macSheetFrame(minWidth: 460, minHeight: 480)
+                case .conflicts:
+                    NavigationStack { ConflictsView() }.macSheetFrame(minWidth: 560, minHeight: 520)
+                case .branchDeleted:
+                    NavigationStack { BranchDeletedView().errorAlert() }.macSheetFrame(minWidth: 480, minHeight: 380)
+                case .newNode:
+                    if let ws = appModel.workspace {
+                        NavigationStack { NewNodeView(workspace: ws, selection: selection).errorAlert() }
+                            .macSheetFrame(minWidth: 420, minHeight: 320)
+                    }
                 }
             }
             .activityBanner()
-            .macSheetFrame(minWidth: 460, minHeight: 480)
             .environment(appModel)
-        }
-        .sheet(isPresented: $model.showBranchDeleted) {
-            NavigationStack { BranchDeletedView() }.activityBanner().macSheetFrame(minWidth: 480, minHeight: 380).environment(appModel)
-        }
-        .sheet(isPresented: $model.showConflicts) {
-            NavigationStack { ConflictsView() }.activityBanner().macSheetFrame(minWidth: 560, minHeight: 520).environment(appModel)
+            .environment(\.window, window)
         }
         .activityBanner()
-        .onChange(of: model.wantsSettings) { _, wants in
-            if wants { sheetRaw = Sheet.settings.rawValue; model.wantsSettings = false }
+        .onChange(of: model.settingsWindow, initial: true) { openSettingsIfAsked() }
+        // Settings asked for while conflicts or a deleted branch were up: it opens once they close.
+        .onChange(of: sharedSheetUp) { _, up in if !up { openSettingsIfAsked() } }
+        .onChange(of: sheetRaw) { _, raw in if raw.isEmpty { openSettingsIfAsked() } }
+        // A Commit sheet stepped aside for conflicts, and everything was committed meanwhile (in another window): it
+        // does not come back empty.
+        .onChange(of: model.workspace.map { CommitTarget(branch: $0.branch, hasChanges: $0.hasChanges) }) { old, new in
+            guard let new else { return }
+            // Another branch: a Commit sheet that stepped aside does not come back for it (the message is kept).
+            if old?.branch != new.branch {
+                if sheetRaw == Sheet.commit.rawValue && presentedSheet != .stored(.commit) { sheetRaw = "" }
+                return
+            }
+            // Only everything committed on the same branch (a branch switch is not a commit).
+            guard !new.hasChanges else { return }
+            if sheetRaw == Sheet.commit.rawValue && presentedSheet != .stored(.commit) {
+                sheetRaw = ""
+                commitMessage = ""
+            }
         }
-        .alert("Breezy", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(model.errorMessage ?? "")
+        // A window used is the front one, for the app-wide sheets and alerts that follow (an iPad's windows side by
+        // side are all active, so being active does not say which one the user is in).
+        .onChange(of: sheetRaw) { _, raw in if !raw.isEmpty { model.windowUsed(window.id) } }
+        // Shown by the sheet on top when there is one (each shows them): an alert under a sheet does not come up.
+        .errorAlert(covered: settingsInPlace || presentedSheet != nil)
+    }
+
+    private func shown(_ p: AppModel.Presentation, _ isUp: Bool) -> Bool { isUp && model.shows(p, in: window.id) }
+
+    /// Settings asked for, here: opened unless another sheet is up (conflicts, a deleted branch, or one that stepped
+    /// aside for them); it waits until that closes.
+    private func openSettingsIfAsked() {
+        guard model.settingsWindow == window.id, !sharedSheetUp, sheetRaw.isEmpty else { return }
+        sheetRaw = Sheet.settings.rawValue
+        model.wantsSettings = nil
+    }
+
+    /// Conflicts or the deleted branch is up in this window.
+    private var sharedSheetUp: Bool {
+        presentedSheet == .conflicts || presentedSheet == .branchDeleted
+    }
+
+    /// What this window's one sheet can be.
+    enum Presented: Hashable, Identifiable {
+        case stored(Sheet), conflicts, branchDeleted, newNode
+
+        /// Conflicts and a deleted branch come first: a sheet open meanwhile (Commit, New Node) steps aside and comes
+        /// back after them as it was (its state is saved). Settings, Publish and Branches stay, as what they hold is not
+        /// all saved (a token as typed, a publish under way, merge options), and they come up once it is closed.
+        static func choose(stored: Sheet?, conflicts: Bool, branchDeleted: Bool, newNode: Bool) -> Presented? {
+            if let stored, stored != .commit { return .stored(stored) }
+            if conflicts { return .conflicts }
+            if branchDeleted { return .branchDeleted }
+            if let stored { return .stored(stored) }
+            return newNode ? .newNode : nil
+        }
+
+        var id: String {
+            switch self {
+            case let .stored(s): s.rawValue
+            case .conflicts: "conflicts"
+            case .branchDeleted: "branchDeleted"
+            case .newNode: "newNode"
+            }
         }
     }
+
+    /// The sheet this window shows (`Presented.choose`).
+    private var presentedSheet: Presented? {
+        // Conflicts need a site to show (without one the sheet would be empty).
+        // Commit lists the site's changes: without a site it would be empty (and its errors nowhere).
+        let stored = Sheet(rawValue: sheetRaw).flatMap { $0 == .commit && model.workspace == nil ? nil : $0 }
+        return Presented.choose(stored: stored, conflicts: model.workspace != nil && shown(.conflicts, model.showConflicts),
+                         branchDeleted: shown(.branchDeleted, model.showBranchDeleted),
+                         newNode: showNewRaw && model.workspace != nil)
+    }
+
+    private var presented: Binding<Presented?> {
+        let model = model, id = window.id
+        let current = presentedSheet // read in body, so a change redraws it
+        return Binding(get: { current }, set: { new in
+            guard new == nil, let current else { return }
+            // Dismissed by the user (swipe, Close, Later).
+            switch current {
+            case .stored: sheetRaw = ""
+            case .conflicts: if model.shows(.conflicts, in: id) { model.showConflicts = false }
+            case .branchDeleted: if model.shows(.branchDeleted, in: id) { model.showBranchDeleted = false }
+            case .newNode: showNewRaw = false
+            }
+        })
+    }
+
+    /// Settings fills the window (no site yet, or no token): it shows the errors itself, over its own sheet.
+    private var settingsInPlace: Bool { model.workspace == nil && !model.isBusy && (!model.hasToken || model.isOnline) }
 
     /// Uncommitted edits are saved with their branch, so switching never loses them.
     private func requestSwitch(to name: String, in ws: SiteWorkspace) {
         guard name != ws.branch else { return }
+        model.windowUsed(window.id) // what goes wrong shows here
         Task { await model.switchBranch(name) }
     }
 
@@ -146,7 +252,7 @@ struct RootView: View {
     @ViewBuilder
     private func sidebar(_ ws: SiteWorkspace) -> some View {
         #if os(iOS)
-        NodeListView(workspace: ws, selection: selection)
+        NodeListView(workspace: ws, selection: selection, window: window)
             .navigationTitle(ws.branch)
             .navigationBarTitleDisplayMode(.inline)
             .toolbarTitleMenu { branchMenu(ws) }
@@ -171,7 +277,7 @@ struct RootView: View {
                 }
             }
         #else
-        NodeListView(workspace: ws, selection: selection)
+        NodeListView(workspace: ws, selection: selection, window: window)
         #endif
     }
 
@@ -221,9 +327,35 @@ struct RootView: View {
     }
 }
 
+extension View {
+    /// The error alert (`AppModel.errorMessage`), in this view's window only (AppModel.shows). Put on the root of the
+    /// window and on each sheet, so the one on top shows it; `covered` while a sheet of this view is up.
+    func errorAlert(covered: Bool = false) -> some View { modifier(ErrorAlert(covered: covered)) }
+}
+
+private struct ErrorAlert: ViewModifier {
+    @Environment(AppModel.self) private var model
+    @Environment(\.window) private var window
+    let covered: Bool
+
+    func body(content: Content) -> some View {
+        let model = model, id = window?.id
+        let isUp = { model.errorMessage != nil && model.shows(.error, in: id ?? model.windows.front ?? "") }
+        let shown = !covered && isUp() // read in body, so a change redraws it
+        // Cleared only by the user's OK: not when a sheet coming up covers it (its own alert shows it then).
+        content.alert("Breezy", isPresented: Binding(get: { shown }, set: { up in if !up && shown && isUp() { model.errorMessage = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(model.errorMessage ?? "")
+        }
+    }
+}
+
 /// Shows offline / pending / conflicts / synced; tapping syncs now, or opens the conflicts.
 struct SyncStatusButton: View {
     @Environment(AppModel.self) private var model
+    /// The window it is in: what it opens shows there.
+    @Environment(\.window) private var window
 
     /// Commits waiting to be pushed, shown as a badge on the compact (icon-only) status.
     private var waiting: Int {
@@ -238,10 +370,11 @@ struct SyncStatusButton: View {
     var body: some View {
         let (text, icon, color) = describe(model.syncStatus)
         Button {
+            model.windowUsed(window?.id)
             switch model.syncStatus {
-            case .conflicts: model.showConflicts = true
-            case .branchDeleted: model.showBranchDeleted = true
-            case .noToken: model.wantsSettings = true
+            case .conflicts: model.request(.conflicts, in: window?.id)
+            case .branchDeleted: model.request(.branchDeleted, in: window?.id)
+            case .noToken: model.wantsSettings = window?.id ?? model.windows.front ?? ""
             default: Task { await model.sync() }
             }
         } label: {

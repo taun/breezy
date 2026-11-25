@@ -13,7 +13,7 @@ targets:
     supportedDestinations: [iOS, macOS]
     sources:
       - path: App
-        excludes: ["*.entitlements"]
+        excludes: ["*.entitlements", "*.plist"]
     dependencies:
       - package: BreezyKit
         product: BreezyKit
@@ -23,13 +23,18 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: org.taun.Breezy
         PRODUCT_NAME: Breezy
-        MARKETING_VERSION: "1.3.0"
+        MARKETING_VERSION: "1.4.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Breezy
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        # iPad: one window (UIApplicationSupportsMultipleScenes off); the Mac has several. Merged with the generated keys.
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]: NO
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]: NO
+        INFOPLIST_FILE[sdk=iphoneos*]: App/Info-iOS.plist
+        INFOPLIST_FILE[sdk=iphonesimulator*]: App/Info-iOS.plist
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
         INFOPLIST_KEY_UIFileSharingEnabled: YES
@@ -55,7 +60,7 @@ targets:
     sources:
       - path: AppTests
       - path: App
-        excludes: ["*.entitlements", "BreezyApp.swift"]
+        excludes: ["*.entitlements", "*.plist", "BreezyApp.swift"]
     dependencies:
       - package: BreezyKit
         product: BreezyKit

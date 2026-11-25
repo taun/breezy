@@ -831,7 +831,46 @@ public final class SiteWorkspace {
     /// Settles one conflicted file. When the last one is settled, GitHub's snapshot becomes the base; sync again to push.
     public func resolve(_ path: String, with resolution: ConflictResolution) throws {
         guard state.conflicts.contains(where: { $0.path == path }) else { return }
-        try flushEditorStates()
+        // Failed part way (a file could not be written): everything goes back to how it was, on disk as far as it can
+        // be written and in memory, so the conflict is still open with both sides (Keep Mine still has mine).
+        try flushEditorStates() // first, so undoing a failure below does not undo these
+        // Every node's working files: settling the last conflict adopts GitHub's version, which changes others too.
+        let before = (state: state, queue: queue, revisions: remoteRevision)
+        let working = store.working(branch), workingStates = store.workingStates(branch)
+        do {
+            try resolveSaving(path, with: resolution)
+        } catch {
+            // The resolution reached state.json only if adopt saved it. Then the old state must go back first: if it
+            // cannot, the resolution stays as saved (GitHub's version taken), and memory follows the disk.
+            let resolvedOnDisk = store.branchState(named: branch).map { !$0.conflicts.contains { $0.path == path } } ?? false
+            if resolvedOnDisk && (try? store.saveBranchState(before.state)) == nil {
+                if let saved = store.branchState(named: branch) { state = saved }
+                queue = store.queue(branch)
+                try? rebuild()
+                throw error
+            }
+            // Otherwise everything goes back: the files, the queue, and state.json last (an earlier step may have
+            // saved it with the conflict still open, for example without a picture's pending upload).
+            restore(working, now: store.working(branch), save: store.saveWorking, remove: store.removeWorking)
+            restore(workingStates, now: store.workingStates(branch), save: store.saveWorkingState, remove: store.removeWorkingState)
+            try? store.saveQueue(before.queue, for: branch)
+            try? store.saveBranchState(before.state)
+            state = before.state
+            queue = before.queue
+            remoteRevision = before.revisions
+            try? rebuild()
+            throw error
+        }
+    }
+
+    /// Puts a branch's working files (slug → text) back as they were, as far as they can be written.
+    private func restore(_ before: [String: String], now: [String: String],
+                         save: (String, String, String) throws -> Void, remove: (String, String) throws -> Void) {
+        for (slug, text) in before where now[slug] != text { try? save(text, slug, branch) }
+        for slug in now.keys where before[slug] == nil { try? remove(slug, branch) }
+    }
+
+    private func resolveSaving(_ path: String, with resolution: ConflictResolution) throws {
         switch (SitePath.kind(path), resolution) {
         case let (.node(slug)?, .mine):
             // A node kept for its draft alone (deleted on GitHub, otherwise unchanged here) is put back as an edit.
@@ -907,9 +946,11 @@ public final class SiteWorkspace {
     /// Recreates a branch that was deleted on GitHub, at the commit this copy is based on (GitHub keeps it, for
     /// example through the pull request), so the next `sync` creates it and pushes the queued commits.
     public func recreateOnGitHub() throws {
-        state.existsOnRemote = false
-        state.deletedOnGitHubAt = nil
-        try store.saveBranchState(state)
+        var s = state // kept only once saved, so a failed save leaves the branch as deleted
+        s.existsOnRemote = false
+        s.deletedOnGitHubAt = nil
+        try store.saveBranchState(s)
+        state = s
     }
 
     /// Moves this copy's local changes (uncommitted edits and queued commits, as uncommitted edits) onto a new branch

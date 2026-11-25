@@ -3,14 +3,19 @@ import SwiftUI
 
 struct NodeListView: View {
     @Environment(AppModel.self) private var model
+    /// Errors from here show in this window.
+    @Environment(\.window) private var window
     let workspace: SiteWorkspace
     @Binding var selection: String?
-    @AppStorage("list.search") private var search = ""
+    // Search, filters and pending actions are this window's (Windows.swift); the order is the app's.
+    @AppStorage private var search: String
     /// "" means all types.
-    @AppStorage("list.type") private var typeRaw = ""
-    @AppStorage("list.showNew") private var showNew = false
+    @AppStorage private var typeRaw: String
+    @AppStorage private var showNew: Bool
     /// Slug awaiting delete confirmation ("" = none); kept across relaunches like the rest of the UI state.
-    @AppStorage("list.pendingDelete") private var pendingDelete = ""
+    @AppStorage private var pendingDelete: String
+    @Environment(\.supportsMultipleWindows) private var supportsMultipleWindows
+    @Environment(\.openWindow) private var openWindow
     /// List order (issue #1): most recently updated first, drafts on top, unless changed in the filter menu.
     @AppStorage("list.sort") private var sortRaw = NodeSort.updated.rawValue
     @AppStorage("list.draftsFirst") private var draftsFirst = true
@@ -19,10 +24,20 @@ struct NodeListView: View {
 
     private var typeFilter: String? { typeRaw.isEmpty ? nil : typeRaw }
     /// Issue #3: which states to show.
-    @AppStorage("list.show") private var showRaw = NodeShowFilter.all.rawValue
+    @AppStorage private var showRaw: String
     private var show: NodeShowFilter { NodeShowFilter(rawValue: showRaw) ?? .all }
     /// The list is narrowed by something other than search (the filter icon fills in).
     private var isFiltered: Bool { typeFilter != nil || show != .all }
+
+    init(workspace: SiteWorkspace, selection: Binding<String?>, window: WindowKeys) {
+        self.workspace = workspace
+        _selection = selection
+        _search = AppStorage(wrappedValue: "", window(WindowKeys.search))
+        _typeRaw = AppStorage(wrappedValue: "", window(WindowKeys.type))
+        _showNew = AppStorage(wrappedValue: false, window(WindowKeys.showNew))
+        _pendingDelete = AppStorage(wrappedValue: "", window(WindowKeys.pendingDelete))
+        _showRaw = AppStorage(wrappedValue: NodeShowFilter.all.rawValue, window(WindowKeys.show))
+    }
 
     private var visible: [NodeFile] {
         workspace.visibleNodes(search: search, type: typeFilter, show: show, sort: sort, draftsFirst: draftsFirst)
@@ -39,10 +54,16 @@ struct NodeListView: View {
                         updated: sort == .updated ? workspace.lastUpdated(node.slug) : nil)
                     .tag(node.slug)
                     .contextMenu {
+                        if supportsMultipleWindows {
+                            Button("Open in New Window") { openWindow(value: OpenedNode(slug: node.slug)) }
+                            Divider()
+                        }
                         if state == .deleted {
                             Button("Undelete") { undelete(node.slug) }
                         } else {
-                            if workspace.isModified(node.slug) { Button("Revert Changes") { try? workspace.revert(node.slug) } }
+                            if workspace.isModified(node.slug) { Button("Revert Changes") {
+                                    do { try workspace.revert(node.slug) } catch { model.report(error.localizedDescription, in: window?.id) }
+                                } }
                             Button("Delete", role: .destructive) { pendingDelete = node.slug }
                         }
                     }
@@ -85,12 +106,13 @@ struct NodeListView: View {
                     Label("Filter", systemImage: isFiltered ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
                 }
             }
-            ToolbarItem { Button { showNew = true } label: { Label("New Node", systemImage: "plus") } }
+            ToolbarItem { Button { model.windowUsed(window?.id); showNew = true } label: { Label("New Node", systemImage: "plus") } }
         }
-        .sheet(isPresented: $showNew) {
-            NavigationStack { NewNodeView(workspace: workspace, selection: $selection) }.macSheetFrame(minWidth: 420, minHeight: 320).environment(model)
+        // The New Node sheet is the window's (RootView), which shows one sheet at a time.
+        .refreshable {
+            model.windowUsed(window?.id) // conflicts it finds show here
+            await model.sync()
         }
-        .refreshable { await model.sync() }
         .overlay {
             if visible.isEmpty && (isFiltered || !search.isEmpty) {
                 ContentUnavailableView(emptyTitle, systemImage: "line.3.horizontal.decrease.circle",
@@ -138,11 +160,11 @@ struct NodeListView: View {
     private var linkers: [NodeFile] { pendingDelete.isEmpty ? [] : workspace.incomingLinks(to: pendingDelete) }
 
     private func delete(_ slug: String, removingLinks: Bool) {
-        do { try workspace.deleteNode(slug, removingIncomingLinks: removingLinks) } catch { model.errorMessage = error.localizedDescription }
+        do { try workspace.deleteNode(slug, removingIncomingLinks: removingLinks) } catch { model.report(error.localizedDescription, in: window?.id) }
     }
 
     private func undelete(_ slug: String) {
-        do { try workspace.undelete(slug) } catch { model.errorMessage = error.localizedDescription }
+        do { try workspace.undelete(slug) } catch { model.report(error.localizedDescription, in: window?.id) }
     }
 }
 
@@ -184,6 +206,8 @@ struct NodeRow: View {
 
 struct NewNodeView: View {
     @Environment(AppModel.self) private var model
+    /// Errors from here show in this window.
+    @Environment(\.window) private var window
     @Environment(\.dismiss) private var dismiss
     let workspace: SiteWorkspace
     @Binding var selection: String?
@@ -220,7 +244,7 @@ struct NewNodeView: View {
                         selection = slug
                         slug = ""; title = ""; type = "post"
                         dismiss()
-                    } catch { model.errorMessage = error.localizedDescription }
+                    } catch { model.report(error.localizedDescription, in: window?.id) }
                 }
                 .disabled(slug.isEmpty || title.isEmpty || type.isEmpty || !slugIssues.isEmpty)
             }

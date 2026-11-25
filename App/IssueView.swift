@@ -4,6 +4,8 @@ import SwiftUI
 /// Files an issue in Breezy's repository (opened from Settings).
 struct IssueView: View {
     @Environment(AppModel.self) private var model
+    /// Work started here reports to this window (AppModel.windowUsed).
+    @Environment(\.window) private var window
     @Environment(\.openURL) private var openURL
     @AppStorage("issue.title") private var title = ""
     @AppStorage("issue.body") private var details = ""
@@ -61,6 +63,7 @@ struct IssueView: View {
     private func submit() {
         sending = true
         Task {
+            model.windowUsed(window?.id)
             defer { sending = false }
             guard let issue = await model.fileIssue(title: title, body: details, kind: kind.wrappedValue, execute: execute) else { return }
             filed = issue

@@ -102,6 +102,68 @@ struct Harness {
         #expect(h.model.workspace?.nodes["a"]?.title == "Unpushed")
     }
 
+    /// Regression: a recreate that failed closed the deleted-branch sheet, leaving only the error.
+    @Test func aFailedRecreateKeepsTheDeletedBranchSheet() async throws {
+        let h = Harness()
+        await h.connect()
+        h.acceptBranch("feature")
+        await h.model.createBranch("feature")
+        try h.model.workspace?.update("a") { try $0.setTitle("Unpushed") }
+        h.deleteOnGitHub("feature")
+        await h.model.sync()
+        #expect(h.model.showBranchDeleted)
+        // The branch's state cannot be saved.
+        let folder = h.store.root.appendingPathComponent("branches/feature")
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: folder.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder.path) }
+        await h.model.recreateBranchOnGitHub()
+        #expect(h.model.errorMessage != nil)
+        #expect(h.model.showBranchDeleted)
+        #expect(h.model.isDeletedOnGitHub("feature")) // not marked for recreating, in memory either
+    }
+
+    /// Regression: a resolution that failed closed the merge editor, losing the merged text.
+    @Test func aFailedResolutionSaysSo() async throws {
+        let h = Harness()
+        await h.connect()
+        try h.model.workspace?.update("a") { try $0.setTitle("Mine") }
+        h.github.remoteMoves(to: "c9", changing: ["src/nodes/a.md": "---\ntitle: \"Theirs\"\ntype: person\nlinks: []\n---\n"])
+        await h.model.sync()
+        #expect(h.model.showConflicts)
+        let path = try #require(h.model.workspace?.conflicts.first?.path)
+        let folder = h.store.root.appendingPathComponent("branches/main")
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: folder.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder.path) }
+        #expect(await h.model.resolve(path, with: .mine) == false)
+        #expect(h.model.errorMessage != nil)
+        #expect(h.model.showConflicts)
+        #expect(h.model.workspace?.conflicts.contains { $0.path == path } == true) // still open, in memory too
+    }
+
+    /// Regression (review): a Use GitHub's that failed part way had already dropped the local version, so the
+    /// conflict came back without "mine".
+    @Test func aFailedUseGitHubsKeepsMine() async throws {
+        let h = Harness()
+        await h.connect()
+        let ws = try #require(h.model.workspace)
+        try ws.update("a") { try $0.setTitle("Mine") }
+        try ws.commit(message: "Mine") // queued, not pushed
+        h.github.remoteMoves(to: "c9", changing: ["src/nodes/a.md": "---\ntitle: \"Theirs\"\ntype: person\nlinks: []\n---\n"])
+        await h.model.sync()
+        let path = try #require(ws.conflicts.first?.path)
+        // state.json becomes a folder: Use GitHub's drops the queued version (the queue can be saved), then fails.
+        let stateFile = h.store.root.appendingPathComponent("branches/main/state.json")
+        let saved = try Data(contentsOf: stateFile)
+        try FileManager.default.removeItem(at: stateFile)
+        try FileManager.default.createDirectory(at: stateFile, withIntermediateDirectories: false)
+        #expect(await h.model.resolve(path, with: .theirs) == false)
+        try FileManager.default.removeItem(at: stateFile)
+        try saved.write(to: stateFile)
+        #expect(ws.nodes["a"]?.title == "Mine")
+        #expect(ws.conflicts.contains { $0.path == path })
+        #expect(h.store.queue("main").count == 1) // the queued version is back on disk
+    }
+
     @Test func cleanCopiesOfBranchesGoneFromGitHubArePruned() async throws {
         let h = Harness()
         await h.connect()

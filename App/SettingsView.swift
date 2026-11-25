@@ -3,8 +3,12 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
+    /// Work started here reports to this window (AppModel.windowUsed).
+    @Environment(\.window) private var window
     /// Set when shown as a sheet. Never call `dismiss` here: as a window's root view on macOS it closes the window.
     var close: (() -> Void)?
+    /// Filling a window that has a sheet over it, which shows the errors instead.
+    var covered = false
     @State private var repo = ""
     @State private var token = ""
     @State private var website = ""
@@ -31,7 +35,7 @@ struct SettingsView: View {
                 case let .deviceOnly(reason):
                     Label("Saved on this device only, not syncing: \(reason)", systemImage: "exclamationmark.icloud").foregroundStyle(.orange)
                 case .missing:
-                    Button("Check iCloud Keychain Again") { Task { await model.refreshToken() } }
+                    Button("Check iCloud Keychain Again") { Task { model.windowUsed(window?.id); await model.refreshToken() } }
                 }
             } header: {
                 Text("Personal access token")
@@ -45,7 +49,7 @@ struct SettingsView: View {
                     .textInputAutocapitalization(.never)
                     .keyboardType(.URL)
                     #endif
-                    .onSubmit { model.setWebsiteURL(website) }
+                    .onSubmit { model.windowUsed(window?.id); model.setWebsiteURL(website) }
             } header: {
                 Text("Website")
             } footer: {
@@ -53,7 +57,7 @@ struct SettingsView: View {
             }
             Section {
                 Button("Save and connect") {
-                    Task { if await model.saveSettings(repo: repo, token: token) { token = ""; close?() } }
+                    Task { model.windowUsed(window?.id); if await model.saveSettings(repo: repo, token: token) { token = ""; close?() } }
                 }
                 .disabled(repo.isEmpty || (!model.hasToken && token.isEmpty) || model.isBusy)
                 if model.hasToken {
@@ -77,7 +81,7 @@ struct SettingsView: View {
                 }
             }
             Section {
-                Button("File an Issue…") { filingIssue = true }
+                Button("File an Issue…") { model.windowUsed(window?.id); filingIssue = true }
             } footer: {
                 Text("Report a bug or suggest an enhancement for Breezy without leaving the app.")
             }
@@ -91,8 +95,11 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .sheet(isPresented: $filingIssue) {
-            NavigationStack { IssueView(close: { filingIssue = false }) }.macSheetFrame(minWidth: 460, minHeight: 420).environment(model)
+            NavigationStack { IssueView(close: { filingIssue = false }).errorAlert() }.macSheetFrame(minWidth: 460, minHeight: 420)
+                .environment(model).environment(\.window, window)
         }
+        // It shows its own errors, as a sheet or filling the window (RootView's alert is under it or held back).
+        .errorAlert(covered: filingIssue || covered)
         .navigationTitle("Settings")
         .toolbar {
             if let close {
@@ -103,6 +110,7 @@ struct SettingsView: View {
             repo = model.repoString
             website = model.websiteURL?.absoluteString ?? ""
         }
+        // Not windowUsed: Settings also goes when the user did not close it (the site download finishing).
         .onDisappear { if website != (model.websiteURL?.absoluteString ?? "") { model.setWebsiteURL(website) } }
     }
 }

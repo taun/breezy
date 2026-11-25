@@ -7,6 +7,8 @@ import UniformTypeIdentifiers
 /// an address is only where the picture comes from and is never stored.
 struct HeaderImageSection: View {
     @Environment(AppModel.self) private var model
+    /// Errors from here show in this window.
+    @Environment(\.window) private var window
     let workspace: SiteWorkspace
     let slug: String
     let header: NodeHeader
@@ -42,6 +44,7 @@ struct HeaderImageSection: View {
             Toggle("Make a thumbnail for the bookshelf", isOn: $makeThumbnail)
             HStack {
                 PasteButton(supportedContentTypes: [.image]) { providers in
+                    model.windowUsed(window?.id) // where a failure is shown
                     model.pasteHeaderImage(providers, slug: slug, in: workspace, makeThumbnail: makeThumbnail)
                 }
                     .labelStyle(.titleAndIcon)
@@ -131,7 +134,8 @@ struct HeaderImageSection: View {
 
     /// Asks for the drop's items at once, while it is being performed. Refused while another picture is on its way.
     private func drop(_ providers: [NSItemProvider]) -> Bool {
-        model.dropHeaderImage(providers, slug: slug, in: workspace, makeThumbnail: makeThumbnail) != nil
+        model.windowUsed(window?.id) // where a failure is shown
+        return model.dropHeaderImage(providers, slug: slug, in: workspace, makeThumbnail: makeThumbnail) != nil
     }
 
     /// A picture on its way, which can be stopped (a photo still downloading from iCloud, a slow website).
@@ -147,11 +151,12 @@ struct HeaderImageSection: View {
     }
 
     private func run(_ change: () throws -> Void) {
-        do { try change() } catch { model.errorMessage = error.localizedDescription }
+        do { try change() } catch { model.report(error.localizedDescription, in: window?.id) }
     }
 
     private func importAddress() async {
         let typed = address, node = slug
+        model.windowUsed(window?.id) // where a failure is shown
         guard !typed.trimmingCharacters(in: .whitespaces).isEmpty,
               let work = model.importHeaderImage(slug: node, from: typed, makeThumbnail: makeThumbnail, in: workspace)
         else { return }

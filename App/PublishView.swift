@@ -4,6 +4,8 @@ import SwiftUI
 /// Publishing merges the current branch into the default branch, which deploys the site.
 struct PublishView: View {
     @Environment(AppModel.self) private var model
+    /// Work started here reports to this window (AppModel.windowUsed).
+    @Environment(\.window) private var window
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @State private var comparison: Comparison?
@@ -62,7 +64,7 @@ struct PublishView: View {
         }
         .confirmationDialog("Publish \(model.currentBranch) to the website?", isPresented: $confirming, titleVisibility: .visible) {
             Button("Publish") {
-                Task { published = await model.publish(method: method, deleteBranch: deleteBranch) }
+                Task { model.windowUsed(window?.id); published = await model.publish(method: method, deleteBranch: deleteBranch) }
             }
         } message: {
             Text("This merges it into \(model.defaultBranch). Everyone sees the changes once the site rebuilds.")

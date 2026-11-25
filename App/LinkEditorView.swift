@@ -4,6 +4,8 @@ import SwiftUI
 /// Outgoing links with target and relation pickers, plus the incoming links for context.
 struct LinkEditorView: View {
     @Environment(AppModel.self) private var model
+    /// Errors from here show in this window.
+    @Environment(\.window) private var window
     let workspace: SiteWorkspace
     let slug: String
     /// Whether the section shows its "Links" header (see `TabSection`).
@@ -63,7 +65,7 @@ struct LinkEditorView: View {
     }
 
     private func setLinks(_ new: [NodeLink]) {
-        do { try workspace.update(slug) { try $0.setLinks(new) } } catch { model.errorMessage = error.localizedDescription }
+        do { try workspace.update(slug) { try $0.setLinks(new) } } catch { model.report(error.localizedDescription, in: window?.id) }
     }
 }
 

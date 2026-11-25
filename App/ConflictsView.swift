@@ -4,6 +4,8 @@ import SwiftUI
 /// Files changed both here and on GitHub since the last sync, settled one at a time.
 struct ConflictsView: View {
     @Environment(AppModel.self) private var model
+    /// Work started here reports to this window (AppModel.windowUsed).
+    @Environment(\.window) private var window
     @Environment(\.dismiss) private var dismiss
     @AppStorage("conflicts.editing") private var editingPath = ""
 
@@ -23,9 +25,9 @@ struct ConflictsView: View {
                         Text(title(c, ws)).bold()
                         Text(summary(c, ws)).font(.caption).foregroundStyle(.secondary)
                         HStack {
-                            Button("Keep Mine") { Task { await model.resolve(c.path, with: .mine) } }
-                            Button("Use GitHub’s") { Task { await model.resolve(c.path, with: .theirs) } }
-                            Button("Edit…") { editingPath = c.path }
+                            Button("Keep Mine") { Task { model.windowUsed(window?.id); await model.resolve(c.path, with: .mine) } }
+                            Button("Use GitHub’s") { Task { model.windowUsed(window?.id); await model.resolve(c.path, with: .theirs) } }
+                            Button("Edit…") { model.windowUsed(window?.id); editingPath = c.path }
                         }
                         .buttonStyle(.bordered)
                     }
@@ -34,11 +36,13 @@ struct ConflictsView: View {
             }
             .navigationTitle("Conflicts")
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Later") { dismiss() } } }
+            .errorAlert(covered: editing.wrappedValue != nil)
             .sheet(item: editing) { c in
                 let sides = ws.conflictSides(c)
-                NavigationStack { MergeEditor(conflict: c, isDraft: sides.isDraft, mine: sides.mine ?? "", theirs: sides.theirs ?? "") }
+                NavigationStack { MergeEditor(conflict: c, isDraft: sides.isDraft, mine: sides.mine ?? "", theirs: sides.theirs ?? "").errorAlert() }
                     .macSheetFrame(minWidth: 640, minHeight: 560)
                     .environment(model)
+                    .environment(\.window, window)
             }
         }
     }
@@ -62,6 +66,8 @@ private func conflictTitle(_ path: String, isDraft: Bool) -> String {
 /// Shows GitHub's version beside an editable copy of the local one; the result becomes an uncommitted edit.
 struct MergeEditor: View {
     @Environment(AppModel.self) private var model
+    /// Work started here reports to this window (AppModel.windowUsed).
+    @Environment(\.window) private var window
     @Environment(\.dismiss) private var dismiss
     let conflict: Conflict
     /// A node's draft (any text) rather than a node file (front matter required).
@@ -71,6 +77,8 @@ struct MergeEditor: View {
     // The draft and the file it belongs to, kept across relaunches.
     @AppStorage("merge.text") private var text = ""
     @AppStorage("merge.path") private var draftPath = ""
+    /// The conflict being edited (ConflictsView): clearing it closes this sheet, whatever is on screen by then.
+    @AppStorage("conflicts.editing") private var editingPath = ""
 
     var body: some View {
         Form {
@@ -91,9 +99,14 @@ struct MergeEditor: View {
             ToolbarItem(placement: .confirmationAction) {
                 Button("Use This") {
                     Task {
-                        await model.resolve(conflict.path, with: .edited(text))
-                        draftPath = ""
-                        dismiss()
+                        model.windowUsed(window?.id)
+                        // Failed (the error shows over this sheet): the merge stays open, with the text as edited.
+                        // Closed as soon as it is taken, before the sync (which may bring the file back in conflict),
+                        // by clearing what opened it: not dismiss(), which by then may reach another sheet.
+                        await model.resolve(conflict.path, with: .edited(text)) {
+                            draftPath = ""
+                            editingPath = ""
+                        }
                     }
                 }
                 .disabled(!isDraft && !text.hasPrefix("---\n"))

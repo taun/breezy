@@ -4,6 +4,8 @@ import SwiftUI
 /// A deleted node (issue #3): its last content, read-only, with Undelete. Shown until the deletion is published.
 struct DeletedNodeView: View {
     @Environment(AppModel.self) private var model
+    /// Errors from here show in this window.
+    @Environment(\.window) private var window
     let workspace: SiteWorkspace
     let slug: String
 
@@ -19,7 +21,7 @@ struct DeletedNodeView: View {
                             .foregroundStyle(.orange)
                     }
                     Button {
-                        do { try workspace.undelete(slug) } catch { model.errorMessage = error.localizedDescription }
+                        do { try workspace.undelete(slug) } catch { model.report(error.localizedDescription, in: window?.id) }
                     } label: {
                         Label("Undelete", systemImage: "arrow.uturn.backward")
                     }

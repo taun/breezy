@@ -17,6 +17,11 @@ struct BodyEditor: View {
     #if os(iOS)
     @State private var edits = 0
     #endif
+    /// The text was just replaced from outside (another window on this node, a sync): the cursor move that follows
+    /// is not the user's, and must not be saved over the node's cursor.
+    @State private var replacedFromOutside = false
+    /// Counts outside replacements, so only the latest one's timer clears the flag (typing elsewhere is a stream).
+    @State private var outsideGeneration = 0
 
     init(text: Binding<String>, slug: String, selection: [Int]?, restoreToken: Int, onSelection: @escaping ([Int]) -> Void) {
         _text = text
@@ -36,7 +41,18 @@ struct BodyEditor: View {
             .onChange(of: local) { edits &+= 1 }
             #endif
             // Changes from elsewhere (sync, conflict resolution, another node).
-            .onChange(of: text) { _, v in if v != local { local = v } }
+            .onChange(of: text) { _, v in
+                guard v != local else { return }
+                replacedFromOutside = true
+                outsideGeneration &+= 1
+                let generation = outsideGeneration
+                local = v
+                // Once the editor has moved its cursor for it (it reports that in a later update).
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(100))
+                    if outsideGeneration == generation { replacedFromOutside = false }
+                }
+            }
             .onChange(of: slug) { _, _ in local = text }
             // Replacing the text moves the cursor: only after a paste with a refused character, or the first edit
             // of a body that came from another tool with one in it (the issue banner says editing removes it).
@@ -47,7 +63,8 @@ struct BodyEditor: View {
 
     @ViewBuilder private var editor: some View {
         if #available(iOS 18, macOS 15, *) {
-            SelectionRestoringEditor(text: $local, selection: selection, restoreToken: restoreToken, onSelection: onSelection)
+            SelectionRestoringEditor(text: $local, selection: selection, restoreToken: restoreToken,
+                                     onSelection: { if !replacedFromOutside { onSelection($0) } })
         } else {
             TextEditor(text: $local)
         }

@@ -112,6 +112,45 @@ func client(_ m: MockTransport) -> GitHubClient { GitHubClient(repo: RepoRef(own
         #expect(pushed.map { $0["path"] as? String } == ["src/nodes/b.md"]) // a's local change was dropped
     }
 
+    /// A resolution that fails part way (here the branch state cannot be saved, after Use GitHub's has already
+    /// dropped the queued version) is undone: the conflict is still open with both sides, on disk and in memory.
+    @Test func aFailedResolutionIsUndone() async throws {
+        let store = tempStore()
+        let m = MockTransport.site()
+        let ws = try await SiteWorkspace.download("main", client: client(m), store: store)
+        try ws.update("a") { try $0.setTitle("Mine A") }
+        try ws.commit(message: "Local edit")
+        m.remoteMoves(to: "c9", changing: ["src/nodes/a.md": "---\ntitle: \"Theirs A\"\ntype: person\nlinks: []\n---\n"])
+        #expect(try await ws.sync(client: client(m)) == .conflicts(1))
+        // state.json becomes a folder: it cannot be saved, but the queue next to it can.
+        let stateFile = store.root.appendingPathComponent("branches/main/state.json")
+        let saved = try Data(contentsOf: stateFile)
+        try FileManager.default.removeItem(at: stateFile)
+        try FileManager.default.createDirectory(at: stateFile, withIntermediateDirectories: false)
+        #expect(throws: (any Error).self) { try ws.resolve("src/nodes/a.md", with: .theirs) }
+        try FileManager.default.removeItem(at: stateFile)
+        try saved.write(to: stateFile)
+
+        #expect(ws.conflicts.map(\.path) == ["src/nodes/a.md"])
+        #expect(ws.nodes["a"]?.title == "Mine A")
+        #expect(store.queue("main").count == 1) // the queued edit is back on disk
+        let reopened = try #require(try SiteWorkspace.open("main", store: store))
+        #expect(reopened.conflicts.count == 1)
+        #expect(reopened.nodes["a"]?.title == "Mine A")
+    }
+
+    /// Recreating a deleted branch that cannot be saved leaves it as deleted, in memory too.
+    @Test func aFailedRecreateLeavesTheBranchDeleted() async throws {
+        let store = tempStore()
+        let m = MockTransport.site()
+        let ws = try await SiteWorkspace.download("main", client: client(m), store: store)
+        let stateFile = store.root.appendingPathComponent("branches/main/state.json")
+        try FileManager.default.removeItem(at: stateFile)
+        try FileManager.default.createDirectory(at: stateFile, withIntermediateDirectories: false)
+        #expect(throws: (any Error).self) { try ws.recreateOnGitHub() }
+        #expect(ws.state.existsOnRemote)
+    }
+
     @Test func editedResolutionBecomesAnUncommittedEdit() async throws {
         let store = tempStore()
         let m = MockTransport.site()

@@ -6,21 +6,30 @@ struct NodeEditorView: View {
     let workspace: SiteWorkspace
     let slug: String
     @Environment(\.scenePhase) private var scenePhase
-    // Which field of which node was being edited ("slug|field"), restored on relaunch. On this device only: the
-    // node's tab, mode and cursor are in its editor state (`workspace.editorState`), which syncs with the node.
-    @AppStorage("editor.focus") private var focusRaw = ""
+    // Which field of which node was being edited ("slug|field") in this window, restored on relaunch. On this device
+    // only: the node's tab, mode and cursor are in its editor state (`workspace.editorState`), which syncs with the node.
+    @AppStorage private var focusRaw: String
     @FocusState private var focus: Field?
     /// Bumped to put the synced cursor back in the body editor after a sync brought in a new version.
     @State private var restoreToken = 0
 
-    // The last tab chosen on this device: the tab of a node with no editor state yet.
-    @AppStorage("editor.tab") private var tabRaw = Tab.title.rawValue
+    // The last tab chosen in this window: the tab of a node with no editor state yet.
+    @AppStorage private var tabRaw: String
+    private let window: WindowKeys
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
     /// Whether the Body tab has only a sliver of height (it shrinks while the on-screen keyboard is up). A Bool, so
     /// state changes only when the threshold is crossed, not on every frame of a keyboard drag.
     @State private var shortSpace = false
+
+    init(workspace: SiteWorkspace, slug: String, window: WindowKeys) {
+        self.workspace = workspace
+        self.slug = slug
+        self.window = window
+        _focusRaw = AppStorage(wrappedValue: "", window(WindowKeys.focus))
+        _tabRaw = AppStorage(wrappedValue: Tab.title.rawValue, window(WindowKeys.tab))
+    }
 
     enum Field: String { case title, summary, body }
 
@@ -211,7 +220,7 @@ struct NodeEditorView: View {
                 switch bodyMode.wrappedValue {
                 case .draft:
                     DraftView(draft: editorState.draft?.text ?? "", original: node.body, compact: compact,
-                              isStale: workspace.draftIsStale(slug),
+                              isStale: workspace.draftIsStale(slug), window: window,
                               setDraft: { text in run { try workspace.setDraft(slug, text) } },
                               markSeen: { run { try workspace.rebaseDraft(slug) } },
                               use: { text in edit { $0.setBody(text) } })
@@ -264,7 +273,7 @@ struct NodeEditorView: View {
 
     /// Runs a change to the workspace, showing what went wrong if it fails.
     private func run(_ change: () throws -> Void) {
-        do { try change() } catch { model.errorMessage = error.localizedDescription }
+        do { try change() } catch { model.report(error.localizedDescription, in: window.id) }
     }
 
     private var node: NodeFile? { workspace.nodes[slug] }
@@ -335,7 +344,7 @@ struct NodeEditorView: View {
                 }
                 #endif
                 if workspace.isModified(slug) {
-                    ToolbarItem { Button("Revert") { try? workspace.revert(slug) } }
+                    ToolbarItem { Button("Revert") { run { try workspace.revert(slug) } } }
                 }
             }
         }
@@ -349,7 +358,7 @@ struct NodeEditorView: View {
     }
 
     private func edit(_ change: (inout NodeFile) throws -> Void) {
-        do { try workspace.update(slug, change) } catch { model.errorMessage = error.localizedDescription }
+        do { try workspace.update(slug, change) } catch { model.report(error.localizedDescription, in: window.id) }
     }
 }
 
